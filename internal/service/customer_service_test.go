@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/louisealberti/onboarding-api/internal/domain"
 	"github.com/google/uuid"
+	"github.com/louisealberti/onboarding-api/internal/domain"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 )
@@ -533,5 +533,102 @@ func TestUpdateCustomer_PhoneChanged(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, uuid.Nil, captured.Phones[0].ID)
 	assert.True(t, captured.Phones[0].UpdatedAt.After(originalUpdatedAt))
+	repo.AssertExpectations(t)
+}
+
+// =====================
+// Missing coverage cases
+// =====================
+
+func TestCreateCustomer_WithAddressAndPhones(t *testing.T) {
+	repo := new(MockCustomerRepository)
+	svc := NewCustomerService(repo)
+	ctx := context.Background()
+	customer := newValidCustomer()
+	customer.Address = &domain.Address{
+		Street:     "Rua das Flores, 42",
+		City:       "Curitiba",
+		State:      "PR",
+		PostalCode: "80000-000",
+	}
+	customer.Phones = []domain.Phone{
+		{CountryCode: "55", AreaCode: "41", Number: "991112233", Type: "mobile"},
+	}
+
+	repo.On("GetByEmail", ctx, customer.Email).Return(nil, sql.ErrNoRows)
+	repo.On("CreateCustomer", ctx, mock.AnythingOfType("*domain.Customer")).Return(nil)
+
+	err := svc.CreateCustomer(ctx, customer)
+
+	assert.NoError(t, err)
+	assert.NotEqual(t, uuid.Nil, customer.Address.ID)
+	assert.Equal(t, customer.ID, customer.Address.CustomerID)
+	assert.NotZero(t, customer.Address.CreatedAt)
+	assert.NotEqual(t, uuid.Nil, customer.Phones[0].ID)
+	assert.Equal(t, customer.ID, customer.Phones[0].CustomerID)
+	repo.AssertExpectations(t)
+}
+
+func TestCreateCustomer_RepoCreateError(t *testing.T) {
+	repo := new(MockCustomerRepository)
+	svc := NewCustomerService(repo)
+	ctx := context.Background()
+	customer := newValidCustomer()
+	dbErr := errors.New("insert failed")
+
+	repo.On("GetByEmail", ctx, customer.Email).Return(nil, sql.ErrNoRows)
+	repo.On("CreateCustomer", ctx, mock.AnythingOfType("*domain.Customer")).Return(dbErr)
+
+	err := svc.CreateCustomer(ctx, customer)
+
+	assert.ErrorIs(t, err, dbErr)
+	repo.AssertExpectations(t)
+}
+
+func TestSearchCustomer_RepositoryError(t *testing.T) {
+	repo := new(MockCustomerRepository)
+	svc := NewCustomerService(repo)
+	ctx := context.Background()
+	id := uuid.New()
+	dbErr := errors.New("connection timeout")
+
+	repo.On("GetByID", ctx, id).Return(nil, dbErr)
+
+	result, err := svc.SearchCustomer(ctx, id)
+
+	assert.Nil(t, result)
+	assert.ErrorIs(t, err, dbErr)
+	repo.AssertExpectations(t)
+}
+
+func TestDeleteCustomer_RepositoryError(t *testing.T) {
+	repo := new(MockCustomerRepository)
+	svc := NewCustomerService(repo)
+	ctx := context.Background()
+	id := uuid.New()
+	dbErr := errors.New("connection timeout")
+
+	repo.On("GetByID", ctx, id).Return(nil, dbErr)
+
+	err := svc.DeleteCustomer(ctx, id)
+
+	assert.ErrorIs(t, err, dbErr)
+	repo.AssertNotCalled(t, "SoftDelete")
+	repo.AssertExpectations(t)
+}
+
+func TestUpdateCustomer_RepositoryError(t *testing.T) {
+	repo := new(MockCustomerRepository)
+	svc := NewCustomerService(repo)
+	ctx := context.Background()
+	id := uuid.New()
+	dbErr := errors.New("connection timeout")
+
+	repo.On("GetByID", ctx, id).Return(nil, dbErr)
+
+	err := svc.UpdateCustomer(ctx, &domain.Customer{ID: id})
+
+	assert.ErrorIs(t, err, dbErr)
+	repo.AssertNotCalled(t, "UpdateCustomer")
 	repo.AssertExpectations(t)
 }
