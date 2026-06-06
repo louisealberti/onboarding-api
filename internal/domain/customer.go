@@ -52,6 +52,7 @@ type Customer struct {
 type CustomerRepository interface {
 	GetByID(ctx context.Context, id uuid.UUID) (*Customer, error)
 	GetByEmail(ctx context.Context, email string) (*Customer, error)
+	GetByTaxID(ctx context.Context, taxID string) (*Customer, error)
 	CreateCustomer(ctx context.Context, customer *Customer) error
 	UpdateCustomer(ctx context.Context, customer *Customer) error
 	SoftDelete(ctx context.Context, id uuid.UUID) error

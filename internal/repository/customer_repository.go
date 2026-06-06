@@ -254,6 +254,34 @@ func (r *CustomerRepository) GetByID(ctx context.Context, id uuid.UUID) (*domain
 	return customer, nil
 }
 
+func (r *CustomerRepository) GetByTaxID(ctx context.Context, taxID string) (*domain.Customer, error) {
+    customer := &domain.Customer{}
+
+    query := `
+        SELECT id, first_name, last_name, email, tax_id, country_code,
+               status, version, created_at, updated_at
+        FROM customers
+        WHERE tax_id = $1 AND deleted_at IS NULL
+    `
+    err := r.DB.QueryRowContext(ctx, query, taxID).Scan(
+        &customer.ID,
+        &customer.FirstName,
+        &customer.LastName,
+        &customer.Email,
+        &customer.TaxID,
+        &customer.CountryCode,
+        &customer.Status,
+        &customer.Version,
+        &customer.CreatedAt,
+        &customer.UpdatedAt,
+    )
+    if err != nil {
+        return nil, err
+    }
+
+    return customer, nil
+}
+
 func (r *CustomerRepository) SoftDelete(ctx context.Context, id uuid.UUID) error {
 	query := `
         UPDATE customers 

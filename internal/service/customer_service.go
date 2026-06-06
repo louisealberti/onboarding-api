@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/louisealberti/onboarding-api/internal/domain"
 	"github.com/google/uuid"
+	"github.com/louisealberti/onboarding-api/internal/domain"
 )
 
 // REGRAS DE NEGOCIO
@@ -67,6 +67,17 @@ func (s *CustomerService) CreateCustomer(ctx context.Context, c *domain.Customer
 
 func (s *CustomerService) SearchCustomer(ctx context.Context, id uuid.UUID) (*domain.Customer, error) {
 	customer, err := s.repo.GetByID(ctx, id)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrCustomerNotRegistered
+		}
+		return nil, err
+	}
+	return customer, nil
+}
+
+func (s *CustomerService) SearchByTaxID(ctx context.Context, taxID string) (*domain.Customer, error) {
+	customer, err := s.repo.GetByTaxID(ctx, taxID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrCustomerNotRegistered

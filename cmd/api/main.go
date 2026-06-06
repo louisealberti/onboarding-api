@@ -3,12 +3,12 @@ package main
 import (
 	"log"
 
+	"github.com/gin-gonic/gin"
 	"github.com/louisealberti/onboarding-api/internal/config"
 	"github.com/louisealberti/onboarding-api/internal/database"
 	"github.com/louisealberti/onboarding-api/internal/handler"
 	"github.com/louisealberti/onboarding-api/internal/repository"
 	"github.com/louisealberti/onboarding-api/internal/service"
-	"github.com/gin-gonic/gin"
 )
 
 func main() {
@@ -33,6 +33,7 @@ func main() {
 	v1.POST("/customers", h.CreateCustomer)
 	v1.PUT("/customers/:id", h.UpdateCustomer)
 	v1.GET("/customers/:id", h.GetCustomerByID)
+	v1.GET("/customers", h.ListCustomers)
 	v1.DELETE("/customers/:id", h.DeleteCustomer)
 
 	log.Printf("server listening on port %s...", cfg.ServerPort)
