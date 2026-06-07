@@ -13,7 +13,6 @@ import (
 	"github.com/stretchr/testify/mock"
 )
 
-// helpers to avoid repetition
 func newValidCustomer() *domain.Customer {
 	return &domain.Customer{
 		FirstName:   "Ana",
@@ -46,6 +45,7 @@ func TestCreateCustomer(t *testing.T) {
 		repo := new(MockCustomerRepository)
 		svc := NewCustomerService(repo)
 		customer := newValidCustomer()
+
 		repo.On("GetByEmail", ctx, customer.Email).Return(nil, sql.ErrNoRows)
 		repo.On("CreateCustomer", ctx, mock.AnythingOfType("*domain.Customer")).Return(nil)
 
@@ -84,6 +84,18 @@ func TestCreateCustomer(t *testing.T) {
 		repo.AssertNotCalled(t, "CreateCustomer")
 	})
 
+	t.Run("missing country code", func(t *testing.T) {
+		repo := new(MockCustomerRepository)
+		svc := NewCustomerService(repo)
+		customer := newValidCustomer()
+		customer.CountryCode = ""
+
+		err := svc.CreateCustomer(ctx, customer)
+
+		assert.ErrorIs(t, err, ErrMissingCountryCode)
+		repo.AssertNotCalled(t, "CreateCustomer")
+	})
+
 	t.Run("duplicate e-mail", func(t *testing.T) {
 		repo := new(MockCustomerRepository)
 		svc := NewCustomerService(repo)
@@ -113,18 +125,6 @@ func TestCreateCustomer(t *testing.T) {
 		assert.NoError(t, err)
 		assert.Equal(t, "ana@example.com", customer.Email)
 		repo.AssertExpectations(t)
-	})
-
-	t.Run("missing country code", func(t *testing.T) {
-		repo := new(MockCustomerRepository)
-		svc := NewCustomerService(repo)
-		customer := newValidCustomer()
-		customer.CountryCode = ""
-
-		err := svc.CreateCustomer(ctx, customer)
-
-		assert.ErrorIs(t, err, ErrMissingCountryCode)
-		repo.AssertNotCalled(t, "CreateCustomer")
 	})
 
 	t.Run("with address and phones", func(t *testing.T) {
@@ -158,7 +158,6 @@ func TestCreateCustomer(t *testing.T) {
 	t.Run("repo create error", func(t *testing.T) {
 		repo := new(MockCustomerRepository)
 		svc := NewCustomerService(repo)
-		ctx := context.Background()
 		customer := newValidCustomer()
 		dbErr := errors.New("insert failed")
 
@@ -171,7 +170,7 @@ func TestCreateCustomer(t *testing.T) {
 		repo.AssertExpectations(t)
 	})
 
-	t.Run("repository error", func(t *testing.T) {
+	t.Run("repository error on email check", func(t *testing.T) {
 		repo := new(MockCustomerRepository)
 		svc := NewCustomerService(repo)
 		customer := newValidCustomer()
@@ -281,6 +280,22 @@ func TestDeleteCustomer(t *testing.T) {
 		repo.AssertExpectations(t)
 	})
 
+	t.Run("soft delete error", func(t *testing.T) {
+		repo := new(MockCustomerRepository)
+		svc := NewCustomerService(repo)
+		existing := newExistingCustomer()
+		existing.Status = "pending"
+		dbErr := errors.New("connection timeout")
+
+		repo.On("GetByID", ctx, existing.ID).Return(existing, nil)
+		repo.On("SoftDelete", ctx, existing.ID).Return(dbErr)
+
+		err := svc.DeleteCustomer(ctx, existing.ID)
+
+		assert.ErrorIs(t, err, dbErr)
+		repo.AssertExpectations(t)
+	})
+
 	t.Run("repository error", func(t *testing.T) {
 		repo := new(MockCustomerRepository)
 		svc := NewCustomerService(repo)
@@ -299,28 +314,32 @@ func TestDeleteCustomer(t *testing.T) {
 
 func TestUpdateCustomer(t *testing.T) {
 	ctx := context.Background()
+
 	t.Run("success", func(t *testing.T) {
 		repo := new(MockCustomerRepository)
 		svc := NewCustomerService(repo)
 		existing := newExistingCustomer()
 
-		updated := &domain.Customer{
+		var captured *domain.Customer
+		repo.On("GetByID", ctx, existing.ID).Return(existing, nil)
+		repo.On("UpdateCustomer", ctx, mock.AnythingOfType("*domain.Customer")).
+			Run(func(args mock.Arguments) {
+				captured = args.Get(1).(*domain.Customer)
+			}).
+			Return(nil)
+
+		err := svc.UpdateCustomer(ctx, &domain.Customer{
 			ID:          existing.ID,
 			FirstName:   "Ana Paula",
 			LastName:    "Ferreira",
 			Email:       "ana@example.com",
 			TaxID:       "52998224725",
 			CountryCode: "BR",
-		}
-
-		repo.On("GetByID", ctx, existing.ID).Return(existing, nil)
-		repo.On("UpdateCustomer", ctx, mock.AnythingOfType("*domain.Customer")).Return(nil)
-
-		err := svc.UpdateCustomer(ctx, updated)
+		})
 
 		assert.NoError(t, err)
+		assert.Equal(t, "Ana Paula", captured.FirstName)
 		repo.AssertExpectations(t)
-
 	})
 
 	t.Run("customer not found", func(t *testing.T) {
@@ -340,7 +359,7 @@ func TestUpdateCustomer(t *testing.T) {
 	t.Run("version increment", func(t *testing.T) {
 		repo := new(MockCustomerRepository)
 		svc := NewCustomerService(repo)
-		existing := newExistingCustomer() // Version: 1
+		existing := newExistingCustomer()
 
 		var captured *domain.Customer
 		repo.On("GetByID", ctx, existing.ID).Return(existing, nil)
@@ -360,7 +379,7 @@ func TestUpdateCustomer(t *testing.T) {
 		})
 
 		assert.NoError(t, err)
-		assert.Equal(t, 2, captured.Version) // version incrementou
+		assert.Equal(t, 2, captured.Version)
 		repo.AssertExpectations(t)
 	})
 
@@ -456,8 +475,7 @@ func TestUpdateCustomer(t *testing.T) {
 	t.Run("new address", func(t *testing.T) {
 		repo := new(MockCustomerRepository)
 		svc := NewCustomerService(repo)
-		ctx := context.Background()
-		existing := newExistingCustomer() // sem address
+		existing := newExistingCustomer()
 
 		var captured *domain.Customer
 		repo.On("GetByID", ctx, existing.ID).Return(existing, nil)
@@ -524,12 +542,7 @@ func TestUpdateCustomer(t *testing.T) {
 			TaxID:       "52998224725",
 			CountryCode: "BR",
 			Phones: []domain.Phone{
-				{
-					CountryCode: "55",
-					AreaCode:    "41",
-					Number:      "991112233",
-					Type:        "mobile",
-				},
+				{CountryCode: "55", AreaCode: "41", Number: "991112233", Type: "mobile"},
 			},
 		})
 
@@ -574,12 +587,7 @@ func TestUpdateCustomer(t *testing.T) {
 			TaxID:       "52998224725",
 			CountryCode: "BR",
 			Phones: []domain.Phone{
-				{ // número diferente — phone novo
-					CountryCode: "55",
-					AreaCode:    "41",
-					Number:      "999999999",
-					Type:        "mobile",
-				},
+				{CountryCode: "55", AreaCode: "41", Number: "999999999", Type: "mobile"},
 			},
 		})
 
