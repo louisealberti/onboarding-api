@@ -10,4 +10,5 @@ var (
 	ErrDuplicatedTaxID       = errors.New("customer's tax id is already in use")
 	ErrCustomerNotRegistered = errors.New("customer does not exist")
 	ErrCustomerIsBlocked     = errors.New("customer's status is 'blocked',no action is allowed")
+	ErrInvalidTaxID          = errors.New("invalid tax ID for the given country")
 )

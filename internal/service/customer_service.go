@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/louisealberti/onboarding-api/internal/domain"
+	"github.com/louisealberti/onboarding-api/internal/validation/taxid"
 )
 
 // REGRAS DE NEGOCIO
@@ -31,6 +32,9 @@ func (s *CustomerService) CreateCustomer(ctx context.Context, c *domain.Customer
 	}
 	if c.CountryCode == "" {
 		return ErrMissingCountryCode
+	}
+	if err := taxid.Validate(c.CountryCode, c.TaxID); err != nil { // ← aqui
+		return ErrInvalidTaxID
 	}
 
 	existing, err := s.repo.GetByEmail(ctx, c.Email)

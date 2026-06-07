@@ -612,3 +612,102 @@ func TestUpdateCustomer(t *testing.T) {
 		repo.AssertExpectations(t)
 	})
 }
+
+func TestCreateCustomer_TaxIDValidation(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("tax ID validation", func(t *testing.T) {
+		cases := []struct {
+			name        string
+			countryCode string
+			taxID       string
+			wantErr     bool
+		}{
+			{"valid CPF", "BR", "52998224725", false},
+			{"invalid CPF", "BR", "00000000000", true},
+			{"valid CNPJ", "BR", "11222333000181", false},
+			{"invalid CNPJ", "BR", "11222333000182", true},
+			{"valid SSN", "US", "123-45-6789", false},
+			{"invalid SSN", "US", "000-45-6789", true},
+			{"valid EIN", "US", "12-3456789", false},
+			{"invalid EIN", "US", "00-3456789", true},
+			{"valid NI", "GB", "AB123456C", false},
+			{"invalid NI", "GB", "BG123456C", true},
+			{"valid UTR", "GB", "1234567895", false},
+			{"invalid UTR", "GB", "1234567890", true},
+			{"unsupported country", "AR", "12345678901", true},
+		}
+
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				repo := new(MockCustomerRepository)
+				svc := NewCustomerService(repo)
+				customer := newValidCustomer()
+				customer.CountryCode = tc.countryCode
+				customer.TaxID = tc.taxID
+
+				if !tc.wantErr {
+					repo.On("GetByEmail", ctx, customer.Email).Return(nil, sql.ErrNoRows)
+					repo.On("CreateCustomer", ctx, mock.AnythingOfType("*domain.Customer")).Return(nil)
+				}
+
+				err := svc.CreateCustomer(ctx, customer)
+
+				if tc.wantErr {
+					assert.ErrorIs(t, err, ErrInvalidTaxID)
+					repo.AssertNotCalled(t, "GetByEmail")
+					repo.AssertNotCalled(t, "CreateCustomer")
+				} else {
+					assert.NoError(t, err)
+					repo.AssertExpectations(t)
+				}
+			})
+		}
+	})
+}
+
+func TestSearchByTaxID(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("success", func(t *testing.T) {
+		repo := new(MockCustomerRepository)
+		svc := NewCustomerService(repo)
+		existing := newExistingCustomer()
+
+		repo.On("GetByTaxID", ctx, existing.TaxID).Return(existing, nil)
+
+		result, err := svc.SearchByTaxID(ctx, existing.TaxID)
+
+		assert.NoError(t, err)
+		assert.Equal(t, existing.ID, result.ID)
+		assert.Equal(t, existing.TaxID, result.TaxID)
+		repo.AssertExpectations(t)
+	})
+
+	t.Run("customer not found", func(t *testing.T) {
+		repo := new(MockCustomerRepository)
+		svc := NewCustomerService(repo)
+
+		repo.On("GetByTaxID", ctx, "00000000000").Return(nil, sql.ErrNoRows)
+
+		result, err := svc.SearchByTaxID(ctx, "00000000000")
+
+		assert.Nil(t, result)
+		assert.ErrorIs(t, err, ErrCustomerNotRegistered)
+		repo.AssertExpectations(t)
+	})
+
+	t.Run("repository error", func(t *testing.T) {
+		repo := new(MockCustomerRepository)
+		svc := NewCustomerService(repo)
+		dbErr := errors.New("connection timeout")
+
+		repo.On("GetByTaxID", ctx, "00000000000").Return(nil, dbErr)
+
+		result, err := svc.SearchByTaxID(ctx, "00000000000")
+
+		assert.Nil(t, result)
+		assert.ErrorIs(t, err, dbErr)
+		repo.AssertExpectations(t)
+	})
+}
