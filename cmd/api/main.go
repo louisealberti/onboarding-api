@@ -1,7 +1,14 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"log"
+	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/louisealberti/onboarding-api/internal/config"
@@ -14,12 +21,12 @@ import (
 func main() {
 	cfg, err := config.Load()
 	if err != nil {
-		log.Fatalf("erro de configuração: %v", err)
+		log.Fatalf("configuration error: %v", err)
 	}
 
 	db, err := database.NewPostgresConnection(cfg)
 	if err != nil {
-		log.Fatalf("falha crítica ao iniciar o banco: %v", err)
+		log.Fatalf("critical failure connecting to database: %v", err)
 	}
 	defer db.Close()
 
@@ -36,6 +43,37 @@ func main() {
 	v1.GET("/customers", h.ListCustomers)
 	v1.DELETE("/customers/:id", h.DeleteCustomer)
 
-	log.Printf("server listening on port %s...", cfg.ServerPort)
-	r.Run(":" + cfg.ServerPort)
+	// 1. Configure the HTTP server using Gin as the router
+	srvHttp := &http.Server{
+		Addr:    ":" + cfg.ServerPort,
+		Handler: r,
+	}
+
+	// 2. Start the server in a separate goroutine to avoid blocking main
+	go func() {
+		log.Printf("server listening on port %s...", cfg.ServerPort)
+		if err := srvHttp.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Fatalf("failed to start server: %v", err)
+		}
+	}()
+
+	// 3. Create a channel to listen for OS signals
+	// SIGINT = Ctrl+C | SIGTERM = shutdown signal sent by Docker/Kubernetes
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+
+	// Main goroutine blocks here until a signal is received
+	sig := <-quit
+	log.Printf("signal received (%v), starting graceful shutdown...", sig)
+
+	// 4. Create a context with timeout to allow in-flight requests to complete
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// 5. Stop accepting new requests and wait for active ones to finish
+	if err := srvHttp.Shutdown(ctx); err != nil {
+		log.Fatalf("server forced to shutdown before completing pending requests: %v", err)
+	}
+
+	log.Println("server shutdown completed.")
 }
