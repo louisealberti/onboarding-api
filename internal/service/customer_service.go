@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/louisealberti/onboarding-api/internal/domain"
+	"github.com/louisealberti/onboarding-api/internal/validation/email"
 	"github.com/louisealberti/onboarding-api/internal/validation/taxid"
 )
 
@@ -35,6 +36,9 @@ func (s *CustomerService) CreateCustomer(ctx context.Context, c *domain.Customer
 	}
 	if err := taxid.Validate(c.CountryCode, c.TaxID); err != nil { // ← aqui
 		return ErrInvalidTaxID
+	}
+	if err := email.Validate(c.Email); err != nil {
+		return ErrInvalidEmail
 	}
 
 	existing, err := s.repo.GetByEmail(ctx, c.Email)

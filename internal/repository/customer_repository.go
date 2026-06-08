@@ -5,8 +5,8 @@ import (
 	"database/sql"
 	"errors"
 
-	"github.com/louisealberti/onboarding-api/internal/domain"
 	"github.com/google/uuid"
+	"github.com/louisealberti/onboarding-api/internal/domain"
 )
 
 type CustomerRepository struct {
@@ -151,7 +151,7 @@ func (r *CustomerRepository) GetByEmail(ctx context.Context, email string) (*dom
         SELECT id, first_name, last_name, email, tax_id, country_code,
                status, version, created_at, updated_at
         FROM customers
-        WHERE email = $1 AND deleted_at IS NULL
+        WHERE email = $1
     `
 	err := r.DB.QueryRowContext(ctx, query, email).Scan(
 		&customer.ID,
@@ -255,31 +255,31 @@ func (r *CustomerRepository) GetByID(ctx context.Context, id uuid.UUID) (*domain
 }
 
 func (r *CustomerRepository) GetByTaxID(ctx context.Context, taxID string) (*domain.Customer, error) {
-    customer := &domain.Customer{}
+	customer := &domain.Customer{}
 
-    query := `
+	query := `
         SELECT id, first_name, last_name, email, tax_id, country_code,
                status, version, created_at, updated_at
         FROM customers
         WHERE tax_id = $1 AND deleted_at IS NULL
     `
-    err := r.DB.QueryRowContext(ctx, query, taxID).Scan(
-        &customer.ID,
-        &customer.FirstName,
-        &customer.LastName,
-        &customer.Email,
-        &customer.TaxID,
-        &customer.CountryCode,
-        &customer.Status,
-        &customer.Version,
-        &customer.CreatedAt,
-        &customer.UpdatedAt,
-    )
-    if err != nil {
-        return nil, err
-    }
+	err := r.DB.QueryRowContext(ctx, query, taxID).Scan(
+		&customer.ID,
+		&customer.FirstName,
+		&customer.LastName,
+		&customer.Email,
+		&customer.TaxID,
+		&customer.CountryCode,
+		&customer.Status,
+		&customer.Version,
+		&customer.CreatedAt,
+		&customer.UpdatedAt,
+	)
+	if err != nil {
+		return nil, err
+	}
 
-    return customer, nil
+	return customer, nil
 }
 
 func (r *CustomerRepository) SoftDelete(ctx context.Context, id uuid.UUID) error {
