@@ -172,6 +172,26 @@ func (s *CustomerService) DeleteCustomer(ctx context.Context, id uuid.UUID) erro
 	return s.repo.SoftDelete(ctx, id)
 }
 
+func (s *CustomerService) UpdateStatus(ctx context.Context, id uuid.UUID, newStatus string) error {
+	customer, err := s.repo.GetByID(ctx, id)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrCustomerNotRegistered
+		}
+		return err
+	}
+
+	if !customer.CanTransitionTo(newStatus) {
+		return ErrInvalidStatusTransition
+	}
+
+	customer.Status = newStatus
+	customer.Version = customer.Version + 1
+	customer.UpdatedAt = time.Now().UTC()
+
+	return s.repo.UpdateCustomer(ctx, customer)
+}
+
 func findPhoneByNumber(number string, phones []domain.Phone) *domain.Phone {
 	for i := range phones {
 		if phones[i].Number == number {

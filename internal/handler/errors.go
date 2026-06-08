@@ -4,8 +4,8 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/louisealberti/onboarding-api/internal/service"
 	"github.com/gin-gonic/gin"
+	"github.com/louisealberti/onboarding-api/internal/service"
 )
 
 func handleServiceError(c *gin.Context, err error) {
@@ -26,6 +26,9 @@ func handleServiceError(c *gin.Context, err error) {
 
 	case errors.Is(err, service.ErrCustomerIsBlocked):
 		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+
+	case errors.Is(err, service.ErrInvalidStatusTransition):
+		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": err.Error()})
 
 	default:
 		// Unexpected Error — does not expose internaldetails
