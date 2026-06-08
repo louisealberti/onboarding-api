@@ -14,6 +14,7 @@ import (
 	"github.com/louisealberti/onboarding-api/internal/config"
 	"github.com/louisealberti/onboarding-api/internal/database"
 	"github.com/louisealberti/onboarding-api/internal/handler"
+	"github.com/louisealberti/onboarding-api/internal/middleware"
 	"github.com/louisealberti/onboarding-api/internal/repository"
 	"github.com/louisealberti/onboarding-api/internal/service"
 )
@@ -35,6 +36,7 @@ func main() {
 	h := handler.NewCustomerHandler(srv)
 
 	r := gin.Default()
+	r.Use(middleware.RequestID())
 
 	v1 := r.Group("/v1")
 	v1.POST("/customers", h.CreateCustomer)
