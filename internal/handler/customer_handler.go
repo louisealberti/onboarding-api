@@ -92,3 +92,26 @@ func (h *CustomerHandler) DeleteCustomer(c *gin.Context) {
 	}
 	c.Status(http.StatusNoContent)
 }
+
+func (h *CustomerHandler) UpdateStatus(c *gin.Context) {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid customer ID"})
+		return
+	}
+
+	var body struct {
+		Status string `json:"status" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "status is required"})
+		return
+	}
+
+	if err := h.srv.UpdateStatus(c.Request.Context(), id, body.Status); err != nil {
+		handleServiceError(c, err)
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "status updated successfully"})
+}

@@ -48,6 +48,27 @@ type Customer struct {
 	DeletedAt   *time.Time `json:"deletedAt,omitempty"` // Soft Delete
 }
 
+var validTransitions = map[string][]string{
+	"pending":   {"approved", "blocked", "terminated"},
+	"approved":  {"active", "blocked"},
+	"active":    {"blocked", "terminated", "suspended"},
+	"suspended": {"active", "terminated"},
+	"blocked":   {"active", "terminated"},
+}
+
+func (c *Customer) CanTransitionTo(newStatus string) bool {
+	allowed, ok := validTransitions[c.Status]
+	if !ok {
+		return false
+	}
+	for _, s := range allowed {
+		if s == newStatus {
+			return true
+		}
+	}
+	return false
+}
+
 // CustomerRepository
 type CustomerRepository interface {
 	GetByID(ctx context.Context, id uuid.UUID) (*Customer, error)
