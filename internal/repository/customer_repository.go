@@ -78,12 +78,12 @@ func (r *CustomerRepository) UpdateCustomer(ctx context.Context, customer *domai
 
 	customerQuery := `
     	UPDATE customers 
-    	SET first_name = $1, last_name = $2, email = $3, tax_id = $4, country_code = $5, version = $6, updated_at = $7
-    	WHERE id = $8 AND deleted_at IS NULL
+    	SET first_name = $1, last_name = $2, email = $3, tax_id = $4, country_code = $5, status = $6, version = $7, updated_at = $8
+    	WHERE id = $9 AND deleted_at IS NULL
 	`
 	_, err = tx.ExecContext(ctx, customerQuery,
 		customer.FirstName, customer.LastName, customer.Email,
-		customer.TaxID, customer.CountryCode, customer.Version, customer.UpdatedAt, customer.ID,
+		customer.TaxID, customer.CountryCode, customer.Status, customer.Version, customer.UpdatedAt, customer.ID,
 	)
 	if err != nil {
 		return err
