@@ -38,8 +38,6 @@ func (r *CustomerRepository) CreateCustomer(ctx context.Context, customer *domai
 		return err
 	}
 
-	defer tx.Rollback()
-
 	if customer.Address != nil {
 		addressQuery := `
             INSERT INTO addresses (id, customer_id, street, city, state, postal_code, created_at, updated_at)
@@ -151,7 +149,7 @@ func (r *CustomerRepository) GetByEmail(ctx context.Context, email string) (*dom
         SELECT id, first_name, last_name, email, tax_id, country_code,
                status, version, created_at, updated_at
         FROM customers
-        WHERE email = $1
+        WHERE email = $1 AND deleted_at IS NULL
     `
 	err := r.DB.QueryRowContext(ctx, query, email).Scan(
 		&customer.ID,

@@ -72,7 +72,7 @@ func startServer(t *testing.T, db *sql.DB) *httptest.Server {
 	v1 := r.Group("/v1")
 	v1.POST("/customers", h.CreateCustomer)
 	v1.GET("/customers/:id", h.GetCustomerByID)
-	v1.GET("/customers", h.ListCustomers)
+	v1.GET("/customers", h.SearchByTaxID)
 	v1.PUT("/customers/:id", h.UpdateCustomer)
 	v1.PATCH("/customers/:id/status", h.UpdateStatus)
 	v1.DELETE("/customers/:id", h.DeleteCustomer)
