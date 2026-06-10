@@ -349,7 +349,12 @@ func TestUpdateCustomer(t *testing.T) {
 
 		repo.On("GetByID", ctx, id).Return(nil, sql.ErrNoRows)
 
-		err := svc.UpdateCustomer(ctx, &domain.Customer{ID: id})
+		err := svc.UpdateCustomer(ctx, &domain.Customer{
+			ID:          id,
+			Email:       "ana@example.com",
+			TaxID:       "52998224725",
+			CountryCode: "BR",
+		})
 
 		assert.ErrorIs(t, err, ErrCustomerNotRegistered)
 		repo.AssertNotCalled(t, "UpdateCustomer")
@@ -605,7 +610,12 @@ func TestUpdateCustomer(t *testing.T) {
 
 		repo.On("GetByID", ctx, id).Return(nil, dbErr)
 
-		err := svc.UpdateCustomer(ctx, &domain.Customer{ID: id})
+		err := svc.UpdateCustomer(ctx, &domain.Customer{
+			ID:          id,
+			Email:       "ana@example.com",
+			TaxID:       "52998224725",
+			CountryCode: "BR",
+		})
 
 		assert.ErrorIs(t, err, dbErr)
 		repo.AssertNotCalled(t, "UpdateCustomer")
@@ -708,6 +718,283 @@ func TestSearchByTaxID(t *testing.T) {
 
 		assert.Nil(t, result)
 		assert.ErrorIs(t, err, dbErr)
+		repo.AssertExpectations(t)
+	})
+}
+
+func TestCreateCustomer_EmailValidation(t *testing.T) {
+	ctx := context.Background()
+
+	cases := []struct {
+		name    string
+		email   string
+		wantErr error
+	}{
+		{"valid email", "ana@example.com", nil},
+		{"valid email with subdomain", "ana@mail.example.com.br", nil},
+		{"valid email with plus", "ana+test@example.com", nil},
+		{"missing @", "anaexample.com", ErrInvalidEmail},
+		{"missing domain", "ana@", ErrInvalidEmail},
+		{"missing TLD", "ana@example", ErrInvalidEmail},
+		{"space inside email", "ana @example.com", ErrInvalidEmail}, // espaço interno sobrevive ao trim, regex rejeita
+		{"only spaces", "   ", ErrMissingEmail},                     // trim → "", cai no check de empty
+		// "ana@example..com" passes the simplified RFC5322 regex — not tested as invalid
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := new(MockCustomerRepository)
+			svc := NewCustomerService(repo)
+			customer := newValidCustomer()
+			customer.Email = tc.email
+
+			if tc.wantErr == nil {
+				repo.On("GetByEmail", ctx, customer.Email).Return(nil, sql.ErrNoRows)
+				repo.On("CreateCustomer", ctx, mock.AnythingOfType("*domain.Customer")).Return(nil)
+			}
+
+			err := svc.CreateCustomer(ctx, customer)
+
+			if tc.wantErr != nil {
+				assert.ErrorIs(t, err, tc.wantErr)
+				repo.AssertNotCalled(t, "CreateCustomer")
+			} else {
+				assert.NoError(t, err)
+				repo.AssertExpectations(t)
+			}
+		})
+	}
+}
+
+func TestUpdateStatus(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("success: pending → approved", func(t *testing.T) {
+		repo := new(MockCustomerRepository)
+		svc := NewCustomerService(repo)
+		existing := newExistingCustomer() // status: "pending"
+
+		repo.On("GetByID", ctx, existing.ID).Return(existing, nil)
+		repo.On("UpdateCustomer", ctx, mock.AnythingOfType("*domain.Customer")).Return(nil)
+
+		err := svc.UpdateStatus(ctx, existing.ID, "approved")
+
+		assert.NoError(t, err)
+		repo.AssertExpectations(t)
+	})
+
+	t.Run("version is incremented", func(t *testing.T) {
+		repo := new(MockCustomerRepository)
+		svc := NewCustomerService(repo)
+		existing := newExistingCustomer()
+
+		var captured *domain.Customer
+		repo.On("GetByID", ctx, existing.ID).Return(existing, nil)
+		repo.On("UpdateCustomer", ctx, mock.AnythingOfType("*domain.Customer")).
+			Run(func(args mock.Arguments) {
+				captured = args.Get(1).(*domain.Customer)
+			}).
+			Return(nil)
+
+		err := svc.UpdateStatus(ctx, existing.ID, "approved")
+
+		assert.NoError(t, err)
+		assert.Equal(t, 2, captured.Version)
+		repo.AssertExpectations(t)
+	})
+
+	t.Run("status is updated", func(t *testing.T) {
+		repo := new(MockCustomerRepository)
+		svc := NewCustomerService(repo)
+		existing := newExistingCustomer()
+
+		var captured *domain.Customer
+		repo.On("GetByID", ctx, existing.ID).Return(existing, nil)
+		repo.On("UpdateCustomer", ctx, mock.AnythingOfType("*domain.Customer")).
+			Run(func(args mock.Arguments) {
+				captured = args.Get(1).(*domain.Customer)
+			}).
+			Return(nil)
+
+		err := svc.UpdateStatus(ctx, existing.ID, "approved")
+
+		assert.NoError(t, err)
+		assert.Equal(t, "approved", captured.Status)
+		repo.AssertExpectations(t)
+	})
+
+	t.Run("invalid transition retorna ErrInvalidStatusTransition", func(t *testing.T) {
+		repo := new(MockCustomerRepository)
+		svc := NewCustomerService(repo)
+		existing := newExistingCustomer() // status: "pending"
+
+		repo.On("GetByID", ctx, existing.ID).Return(existing, nil)
+
+		// pending → active não é permitido
+		err := svc.UpdateStatus(ctx, existing.ID, "active")
+
+		assert.ErrorIs(t, err, ErrInvalidStatusTransition)
+		repo.AssertNotCalled(t, "UpdateCustomer")
+		repo.AssertExpectations(t)
+	})
+
+	t.Run("all valid transitions from pending", func(t *testing.T) {
+		validTargets := []string{"approved", "blocked", "terminated"}
+		for _, target := range validTargets {
+			t.Run("pending → "+target, func(t *testing.T) {
+				repo := new(MockCustomerRepository)
+				svc := NewCustomerService(repo)
+				existing := newExistingCustomer()
+
+				repo.On("GetByID", ctx, existing.ID).Return(existing, nil)
+				repo.On("UpdateCustomer", ctx, mock.AnythingOfType("*domain.Customer")).Return(nil)
+
+				err := svc.UpdateStatus(ctx, existing.ID, target)
+
+				assert.NoError(t, err)
+				repo.AssertExpectations(t)
+			})
+		}
+	})
+
+	t.Run("customer not found retorna ErrCustomerNotRegistered", func(t *testing.T) {
+		repo := new(MockCustomerRepository)
+		svc := NewCustomerService(repo)
+		id := uuid.New()
+
+		repo.On("GetByID", ctx, id).Return(nil, sql.ErrNoRows)
+
+		err := svc.UpdateStatus(ctx, id, "approved")
+
+		assert.ErrorIs(t, err, ErrCustomerNotRegistered)
+		repo.AssertNotCalled(t, "UpdateCustomer")
+		repo.AssertExpectations(t)
+	})
+
+	t.Run("repository error no GetByID", func(t *testing.T) {
+		repo := new(MockCustomerRepository)
+		svc := NewCustomerService(repo)
+		id := uuid.New()
+		dbErr := errors.New("connection timeout")
+
+		repo.On("GetByID", ctx, id).Return(nil, dbErr)
+
+		err := svc.UpdateStatus(ctx, id, "approved")
+
+		assert.ErrorIs(t, err, dbErr)
+		repo.AssertNotCalled(t, "UpdateCustomer")
+		repo.AssertExpectations(t)
+	})
+
+	t.Run("repository error no UpdateCustomer", func(t *testing.T) {
+		repo := new(MockCustomerRepository)
+		svc := NewCustomerService(repo)
+		existing := newExistingCustomer()
+		dbErr := errors.New("update failed")
+
+		repo.On("GetByID", ctx, existing.ID).Return(existing, nil)
+		repo.On("UpdateCustomer", ctx, mock.AnythingOfType("*domain.Customer")).Return(dbErr)
+
+		err := svc.UpdateStatus(ctx, existing.ID, "approved")
+
+		assert.ErrorIs(t, err, dbErr)
+		repo.AssertExpectations(t)
+	})
+}
+
+func TestUpdateCustomer_Validation(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("missing email retorna ErrMissingEmail", func(t *testing.T) {
+		repo := new(MockCustomerRepository)
+		svc := NewCustomerService(repo)
+
+		err := svc.UpdateCustomer(ctx, &domain.Customer{
+			ID:          uuid.New(),
+			TaxID:       "52998224725",
+			CountryCode: "BR",
+		})
+
+		assert.ErrorIs(t, err, ErrMissingEmail)
+		repo.AssertNotCalled(t, "GetByID")
+	})
+
+	t.Run("invalid email retorna ErrInvalidEmail", func(t *testing.T) {
+		repo := new(MockCustomerRepository)
+		svc := NewCustomerService(repo)
+
+		err := svc.UpdateCustomer(ctx, &domain.Customer{
+			ID:          uuid.New(),
+			Email:       "nao-e-email",
+			TaxID:       "52998224725",
+			CountryCode: "BR",
+		})
+
+		assert.ErrorIs(t, err, ErrInvalidEmail)
+		repo.AssertNotCalled(t, "GetByID")
+	})
+
+	t.Run("missing taxId retorna ErrMissingTaxID", func(t *testing.T) {
+		repo := new(MockCustomerRepository)
+		svc := NewCustomerService(repo)
+
+		err := svc.UpdateCustomer(ctx, &domain.Customer{
+			ID:          uuid.New(),
+			Email:       "ana@example.com",
+			CountryCode: "BR",
+		})
+
+		assert.ErrorIs(t, err, ErrMissingTaxID)
+		repo.AssertNotCalled(t, "GetByID")
+	})
+
+	t.Run("invalid taxId retorna ErrInvalidTaxID", func(t *testing.T) {
+		repo := new(MockCustomerRepository)
+		svc := NewCustomerService(repo)
+
+		err := svc.UpdateCustomer(ctx, &domain.Customer{
+			ID:          uuid.New(),
+			Email:       "ana@example.com",
+			TaxID:       "00000000000",
+			CountryCode: "BR",
+		})
+
+		assert.ErrorIs(t, err, ErrInvalidTaxID)
+		repo.AssertNotCalled(t, "GetByID")
+	})
+
+	t.Run("missing countryCode retorna ErrMissingCountryCode", func(t *testing.T) {
+		repo := new(MockCustomerRepository)
+		svc := NewCustomerService(repo)
+
+		err := svc.UpdateCustomer(ctx, &domain.Customer{
+			ID:    uuid.New(),
+			Email: "ana@example.com",
+			TaxID: "52998224725",
+		})
+
+		assert.ErrorIs(t, err, ErrMissingCountryCode)
+		repo.AssertNotCalled(t, "GetByID")
+	})
+
+	t.Run("email normalizado antes da validação", func(t *testing.T) {
+		repo := new(MockCustomerRepository)
+		svc := NewCustomerService(repo)
+		existing := newExistingCustomer()
+
+		repo.On("GetByID", ctx, existing.ID).Return(existing, nil)
+		repo.On("UpdateCustomer", ctx, mock.AnythingOfType("*domain.Customer")).Return(nil)
+
+		err := svc.UpdateCustomer(ctx, &domain.Customer{
+			ID:          existing.ID,
+			Email:       "  ANA@EXAMPLE.COM  ",
+			TaxID:       "52998224725",
+			CountryCode: "BR",
+			FirstName:   "Ana",
+			LastName:    "Ferreira",
+		})
+
+		assert.NoError(t, err)
 		repo.AssertExpectations(t)
 	})
 }

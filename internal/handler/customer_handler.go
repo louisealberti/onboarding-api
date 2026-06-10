@@ -65,7 +65,7 @@ func (h *CustomerHandler) GetCustomerByID(c *gin.Context) {
 	c.JSON(http.StatusOK, customer)
 }
 
-func (h *CustomerHandler) ListCustomers(c *gin.Context) {
+func (h *CustomerHandler) SearchByTaxID(c *gin.Context) {
 	taxID := c.Query("taxId")
 	if taxID == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "taxId query param is required"})

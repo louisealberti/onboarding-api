@@ -96,6 +96,23 @@ func (s *CustomerService) SearchByTaxID(ctx context.Context, taxID string) (*dom
 }
 
 func (s *CustomerService) UpdateCustomer(ctx context.Context, updatedCustomer *domain.Customer) error {
+	updatedCustomer.Email = strings.ToLower(strings.TrimSpace(updatedCustomer.Email))
+	if updatedCustomer.Email == "" {
+		return ErrMissingEmail
+	}
+	if updatedCustomer.TaxID == "" {
+		return ErrMissingTaxID
+	}
+	if updatedCustomer.CountryCode == "" {
+		return ErrMissingCountryCode
+	}
+	if err := taxid.Validate(updatedCustomer.CountryCode, updatedCustomer.TaxID); err != nil {
+		return ErrInvalidTaxID
+	}
+	if err := email.Validate(updatedCustomer.Email); err != nil {
+		return ErrInvalidEmail
+	}
+
 	current, err := s.repo.GetByID(ctx, updatedCustomer.ID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {

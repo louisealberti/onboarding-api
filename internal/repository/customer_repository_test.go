@@ -427,3 +427,89 @@ func TestIntegration_SoftDelete_AlreadyDeleted(t *testing.T) {
 
 	assert.ErrorIs(t, err, sql.ErrNoRows)
 }
+
+// ── GetByTaxID ─────────────────────────────────────────────────────────────
+
+func TestIntegration_GetByTaxID_Success(t *testing.T) {
+	db := setupDB(t)
+	repo := repository.NewCustomerRepository(db)
+	ctx := context.Background()
+
+	c := newPersistedCustomer()
+	insertCustomer(t, db, c)
+
+	result, err := repo.GetByTaxID(ctx, c.TaxID)
+
+	require.NoError(t, err)
+	assert.Equal(t, c.ID, result.ID)
+	assert.Equal(t, c.TaxID, result.TaxID)
+	assert.Equal(t, c.Email, result.Email)
+}
+
+func TestIntegration_GetByTaxID_NotFound(t *testing.T) {
+	db := setupDB(t)
+	repo := repository.NewCustomerRepository(db)
+	ctx := context.Background()
+
+	result, err := repo.GetByTaxID(ctx, "00000000000")
+
+	assert.Nil(t, result)
+	assert.ErrorIs(t, err, sql.ErrNoRows)
+}
+
+func TestIntegration_GetByTaxID_SoftDeletedIsInvisible(t *testing.T) {
+	db := setupDB(t)
+	repo := repository.NewCustomerRepository(db)
+	ctx := context.Background()
+
+	c := newPersistedCustomer()
+	insertCustomer(t, db, c)
+	_, err := db.Exec(`UPDATE customers SET deleted_at = NOW() WHERE id = $1`, c.ID)
+	require.NoError(t, err)
+
+	result, err := repo.GetByTaxID(ctx, c.TaxID)
+
+	assert.Nil(t, result)
+	assert.ErrorIs(t, err, sql.ErrNoRows)
+}
+
+// ── UpdateCustomer — status persistence ────────────────────────────────────
+
+func TestIntegration_UpdateCustomer_PersistsStatus(t *testing.T) {
+	db := setupDB(t)
+	repo := repository.NewCustomerRepository(db)
+	ctx := context.Background()
+
+	c := newPersistedCustomer() // status: "pending"
+	require.NoError(t, repo.CreateCustomer(ctx, c))
+
+	c.Status = "approved"
+	c.Version = 2
+	c.UpdatedAt = time.Now().UTC().Truncate(time.Millisecond)
+
+	err := repo.UpdateCustomer(ctx, c)
+
+	require.NoError(t, err)
+
+	var status string
+	require.NoError(t, db.QueryRow(`SELECT status FROM customers WHERE id = $1`, c.ID).Scan(&status))
+	assert.Equal(t, "approved", status)
+}
+
+// ── GetByEmail — bug documentado ───────────────────────────────────────────
+
+func TestIntegration_GetByEmail_SoftDeletedStillReturns(t *testing.T) {
+	db := setupDB(t)
+	repo := repository.NewCustomerRepository(db)
+	ctx := context.Background()
+
+	c := newPersistedCustomer()
+	insertCustomer(t, db, c)
+	_, err := db.Exec(`UPDATE customers SET deleted_at = NOW() WHERE id = $1`, c.ID)
+	require.NoError(t, err)
+
+	result, err := repo.GetByEmail(ctx, c.Email)
+
+	assert.Nil(t, result)
+	assert.ErrorIs(t, err, sql.ErrNoRows)
+}
