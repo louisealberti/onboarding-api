@@ -69,11 +69,33 @@ func (c *Customer) CanTransitionTo(newStatus string) bool {
 	return false
 }
 
+// ListParams holds pagination and filter parameters for listing customers.
+type ListParams struct {
+	Page   int    // 1-based
+	Limit  int    // max items per page
+	Status string // optional filter; empty means all statuses
+}
+
+// PageMeta holds pagination metadata returned alongside a list of customers.
+type PageMeta struct {
+	Page       int `json:"page"`
+	Limit      int `json:"limit"`
+	Total      int `json:"total"`
+	TotalPages int `json:"totalPages"`
+}
+
+// PaginatedCustomers is the response envelope for paginated customer lists.
+type PaginatedCustomers struct {
+	Data []Customer `json:"data"`
+	Meta PageMeta   `json:"meta"`
+}
+
 // CustomerRepository
 type CustomerRepository interface {
 	GetByID(ctx context.Context, id uuid.UUID) (*Customer, error)
 	GetByEmail(ctx context.Context, email string) (*Customer, error)
 	GetByTaxID(ctx context.Context, taxID string) (*Customer, error)
+	ListCustomers(ctx context.Context, params ListParams) (*PaginatedCustomers, error)
 	CreateCustomer(ctx context.Context, customer *Customer) error
 	UpdateCustomer(ctx context.Context, customer *Customer) error
 	SoftDelete(ctx context.Context, id uuid.UUID) error

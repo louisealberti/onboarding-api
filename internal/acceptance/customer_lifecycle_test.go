@@ -1,6 +1,7 @@
 package acceptance_test
 
 import (
+	"fmt"
 	"net/http"
 	"testing"
 
@@ -166,5 +167,70 @@ func TestAcceptance_Delete(t *testing.T) {
 		defer resp.Body.Close()
 
 		assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+	})
+}
+
+// TestAcceptance_ListCustomers valida paginação e filtro por status end-to-end.
+func TestAcceptance_ListCustomers(t *testing.T) {
+	db := setupDB(t)
+	srv := startServer(t, db)
+
+	// CPFs válidos usados para popular o banco
+	taxIDs := []string{"52998224725", "11144477735", "29715304346"}
+	for i, taxID := range taxIDs {
+		p := validCustomerPayload()
+		p["email"] = fmt.Sprintf("list%d@example.com", i)
+		p["taxId"] = taxID
+		resp := apiPost(t, srv, "/v1/customers", p)
+		require.Equal(t, http.StatusCreated, resp.StatusCode)
+		resp.Body.Close()
+	}
+
+	t.Run("GET /customers retorna lista paginada", func(t *testing.T) {
+		resp := apiGet(t, srv, "/v1/customers?page=1&limit=10")
+		body := decodeBody(t, resp)
+
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+		data := body["data"].([]any)
+		meta := body["meta"].(map[string]any)
+		assert.Len(t, data, 3)
+		assert.Equal(t, float64(3), meta["total"])
+		assert.Equal(t, float64(1), meta["page"])
+	})
+
+	t.Run("GET /customers?page=1&limit=2 retorna só 2", func(t *testing.T) {
+		resp := apiGet(t, srv, "/v1/customers?page=1&limit=2")
+		body := decodeBody(t, resp)
+
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+		data := body["data"].([]any)
+		meta := body["meta"].(map[string]any)
+		assert.Len(t, data, 2)
+		assert.Equal(t, float64(3), meta["total"])
+		assert.Equal(t, float64(2), meta["totalPages"])
+	})
+
+	t.Run("GET /customers?status=approved retorna lista vazia", func(t *testing.T) {
+		resp := apiGet(t, srv, "/v1/customers?status=approved")
+		body := decodeBody(t, resp)
+
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+		meta := body["meta"].(map[string]any)
+		assert.Equal(t, float64(0), meta["total"])
+	})
+
+	t.Run("GET /customers?status=invalid retorna 400", func(t *testing.T) {
+		resp := apiGet(t, srv, "/v1/customers?status=invalid")
+		defer resp.Body.Close()
+
+		assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	})
+
+	t.Run("GET /customers?taxId= ainda funciona", func(t *testing.T) {
+		resp := apiGet(t, srv, "/v1/customers?taxId=52998224725")
+		body := decodeBody(t, resp)
+
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+		assert.Equal(t, "52998224725", body["taxId"])
 	})
 }

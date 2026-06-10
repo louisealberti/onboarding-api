@@ -228,3 +228,22 @@ func phoneChanged(existing, updated *domain.Phone) bool {
 		existing.Number != updated.Number ||
 		existing.Type != updated.Type
 }
+
+func (s *CustomerService) ListCustomers(ctx context.Context, params domain.ListParams) (*domain.PaginatedCustomers, error) {
+	if params.Page < 1 {
+		params.Page = 1
+	}
+	if params.Limit < 1 || params.Limit > 100 {
+		params.Limit = 20
+	}
+	if params.Status != "" {
+		validStatuses := map[string]bool{
+			"pending": true, "approved": true, "active": true,
+			"suspended": true, "blocked": true, "terminated": true,
+		}
+		if !validStatuses[params.Status] {
+			return nil, ErrInvalidStatus
+		}
+	}
+	return s.repo.ListCustomers(ctx, params)
+}

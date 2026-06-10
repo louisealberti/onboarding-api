@@ -1,0 +1,1 @@
+CREATE INDEX idx_customers_status ON customers (status) WHERE deleted_at IS NULL;

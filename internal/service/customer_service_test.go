@@ -998,3 +998,96 @@ func TestUpdateCustomer_Validation(t *testing.T) {
 		repo.AssertExpectations(t)
 	})
 }
+
+func TestListCustomers(t *testing.T) {
+	ctx := context.Background()
+
+	makeResult := func(total, page, limit int) *domain.PaginatedCustomers {
+		customers := make([]domain.Customer, limit)
+		return &domain.PaginatedCustomers{
+			Data: customers,
+			Meta: domain.PageMeta{Page: page, Limit: limit, Total: total, TotalPages: (total + limit - 1) / limit},
+		}
+	}
+
+	t.Run("success with defaults", func(t *testing.T) {
+		repo := new(MockCustomerRepository)
+		svc := NewCustomerService(repo)
+		expected := makeResult(5, 1, 20)
+
+		repo.On("ListCustomers", ctx, domain.ListParams{Page: 1, Limit: 20}).Return(expected, nil)
+
+		result, err := svc.ListCustomers(ctx, domain.ListParams{Page: 1, Limit: 20})
+
+		assert.NoError(t, err)
+		assert.Equal(t, expected, result)
+		repo.AssertExpectations(t)
+	})
+
+	t.Run("page < 1 defaults to 1", func(t *testing.T) {
+		repo := new(MockCustomerRepository)
+		svc := NewCustomerService(repo)
+		expected := makeResult(3, 1, 20)
+
+		repo.On("ListCustomers", ctx, domain.ListParams{Page: 1, Limit: 20}).Return(expected, nil)
+
+		result, err := svc.ListCustomers(ctx, domain.ListParams{Page: 0, Limit: 20})
+
+		assert.NoError(t, err)
+		assert.NotNil(t, result)
+		repo.AssertExpectations(t)
+	})
+
+	t.Run("limit > 100 defaults to 20", func(t *testing.T) {
+		repo := new(MockCustomerRepository)
+		svc := NewCustomerService(repo)
+		expected := makeResult(3, 1, 20)
+
+		repo.On("ListCustomers", ctx, domain.ListParams{Page: 1, Limit: 20}).Return(expected, nil)
+
+		result, err := svc.ListCustomers(ctx, domain.ListParams{Page: 1, Limit: 200})
+
+		assert.NoError(t, err)
+		assert.NotNil(t, result)
+		repo.AssertExpectations(t)
+	})
+
+	t.Run("valid status filter", func(t *testing.T) {
+		repo := new(MockCustomerRepository)
+		svc := NewCustomerService(repo)
+		expected := makeResult(2, 1, 20)
+
+		repo.On("ListCustomers", ctx, domain.ListParams{Page: 1, Limit: 20, Status: "approved"}).Return(expected, nil)
+
+		result, err := svc.ListCustomers(ctx, domain.ListParams{Page: 1, Limit: 20, Status: "approved"})
+
+		assert.NoError(t, err)
+		assert.NotNil(t, result)
+		repo.AssertExpectations(t)
+	})
+
+	t.Run("invalid status retorna ErrInvalidStatus", func(t *testing.T) {
+		repo := new(MockCustomerRepository)
+		svc := NewCustomerService(repo)
+
+		result, err := svc.ListCustomers(ctx, domain.ListParams{Page: 1, Limit: 20, Status: "nonexistent"})
+
+		assert.Nil(t, result)
+		assert.ErrorIs(t, err, ErrInvalidStatus)
+		repo.AssertNotCalled(t, "ListCustomers")
+	})
+
+	t.Run("repository error", func(t *testing.T) {
+		repo := new(MockCustomerRepository)
+		svc := NewCustomerService(repo)
+		dbErr := errors.New("db failure")
+
+		repo.On("ListCustomers", ctx, domain.ListParams{Page: 1, Limit: 20}).Return(nil, dbErr)
+
+		result, err := svc.ListCustomers(ctx, domain.ListParams{Page: 1, Limit: 20})
+
+		assert.Nil(t, result)
+		assert.ErrorIs(t, err, dbErr)
+		repo.AssertExpectations(t)
+	})
+}

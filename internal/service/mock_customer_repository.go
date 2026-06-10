@@ -50,3 +50,11 @@ func (m *MockCustomerRepository) SoftDelete(ctx context.Context, id uuid.UUID) e
 	args := m.Called(ctx, id)
 	return args.Error(0)
 }
+
+func (m *MockCustomerRepository) ListCustomers(ctx context.Context, params domain.ListParams) (*domain.PaginatedCustomers, error) {
+	args := m.Called(ctx, params)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*domain.PaginatedCustomers), args.Error(1)
+}
