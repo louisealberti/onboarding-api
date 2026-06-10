@@ -234,3 +234,20 @@ func TestAcceptance_ListCustomers(t *testing.T) {
 		assert.Equal(t, "52998224725", body["taxId"])
 	})
 }
+
+// TestAcceptance_Health valida o endpoint GET /health end-to-end.
+func TestAcceptance_Health(t *testing.T) {
+	db := setupDB(t)
+	srv := startServer(t, db)
+
+	t.Run("GET /health retorna healthy quando banco está up", func(t *testing.T) {
+		resp := apiGet(t, srv, "/health")
+		body := decodeBody(t, resp)
+
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+		assert.Equal(t, "healthy", body["status"])
+		assert.Equal(t, "healthy", body["database"])
+		assert.Equal(t, "test", body["version"])
+		assert.Contains(t, body, "buildTime")
+	})
+}

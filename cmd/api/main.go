@@ -3,7 +3,7 @@ package main
 import (
 	"context"
 	"errors"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -19,24 +19,46 @@ import (
 	"github.com/louisealberti/onboarding-api/internal/service"
 )
 
+// Injected at build time via:
+// go build -ldflags "-X main.version=$(git rev-parse --short HEAD) -X main.buildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+var (
+	version   = "dev"
+	buildTime = "unknown"
+)
+
 func main() {
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
+		Level: slog.LevelInfo,
+	}))
+	slog.SetDefault(logger)
+
 	cfg, err := config.Load()
 	if err != nil {
-		log.Fatalf("configuration error: %v", err)
+		logger.Error("configuration error", slog.Any("error", err))
+		os.Exit(1)
 	}
 
 	db, err := database.NewPostgresConnection(cfg)
 	if err != nil {
-		log.Fatalf("critical failure connecting to database: %v", err)
+		logger.Error("critical failure connecting to database", slog.Any("error", err))
+		os.Exit(1)
 	}
 	defer db.Close()
 
 	repo := repository.NewCustomerRepository(db)
-	srv := service.NewCustomerService(repo)
-	h := handler.NewCustomerHandler(srv)
+	svc := service.NewCustomerService(repo)
+	h := handler.NewCustomerHandler(svc)
+	hh := handler.NewHealthHandler(db, handler.BuildInfo{
+		Version:   version,
+		BuildTime: buildTime,
+	})
 
-	r := gin.Default()
+	r := gin.New()
+	r.Use(gin.Recovery())
 	r.Use(middleware.RequestID())
+	r.Use(middleware.Logger(logger))
+
+	r.GET("/health", hh.Health)
 
 	v1 := r.Group("/v1")
 	v1.POST("/customers", h.CreateCustomer)
@@ -46,37 +68,32 @@ func main() {
 	v1.GET("/customers", h.ListCustomers)
 	v1.DELETE("/customers/:id", h.DeleteCustomer)
 
-	// 1. Configure the HTTP server using Gin as the router
 	srvHttp := &http.Server{
 		Addr:    ":" + cfg.ServerPort,
 		Handler: r,
 	}
 
-	// 2. Start the server in a separate goroutine to avoid blocking main
 	go func() {
-		log.Printf("server listening on port %s...", cfg.ServerPort)
+		logger.Info("server starting", slog.String("port", cfg.ServerPort), slog.String("version", version))
 		if err := srvHttp.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.Fatalf("failed to start server: %v", err)
+			logger.Error("failed to start server", slog.Any("error", err))
+			os.Exit(1)
 		}
 	}()
 
-	// 3. Create a channel to listen for OS signals
-	// SIGINT = Ctrl+C | SIGTERM = shutdown signal sent by Docker/Kubernetes
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 
-	// Main goroutine blocks here until a signal is received
 	sig := <-quit
-	log.Printf("signal received (%v), starting graceful shutdown...", sig)
+	logger.Info("signal received, starting graceful shutdown", slog.String("signal", sig.String()))
 
-	// 4. Create a context with timeout to allow in-flight requests to complete
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	// 5. Stop accepting new requests and wait for active ones to finish
 	if err := srvHttp.Shutdown(ctx); err != nil {
-		log.Fatalf("server forced to shutdown before completing pending requests: %v", err)
+		logger.Error("server forced to shutdown", slog.Any("error", err))
+		os.Exit(1)
 	}
 
-	log.Println("server shutdown completed.")
+	logger.Info("server shutdown completed")
 }
