@@ -65,9 +65,12 @@ func startServer(t *testing.T, db *sql.DB) *httptest.Server {
 	repo := repository.NewCustomerRepository(db)
 	svc := service.NewCustomerService(repo)
 	h := handler.NewCustomerHandler(svc)
+	hh := handler.NewHealthHandler(db, handler.BuildInfo{Version: "test", BuildTime: "unknown"})
 
 	r := gin.New()
 	r.Use(middleware.RequestID())
+
+	r.GET("/health", hh.Health)
 
 	v1 := r.Group("/v1")
 	v1.POST("/customers", h.CreateCustomer)
