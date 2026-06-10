@@ -3,6 +3,7 @@ package repository_test
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"testing"
 	"time"
 
@@ -512,4 +513,107 @@ func TestIntegration_GetByEmail_SoftDeletedStillReturns(t *testing.T) {
 
 	assert.Nil(t, result)
 	assert.ErrorIs(t, err, sql.ErrNoRows)
+}
+
+// ── ListCustomers ───────────────────────────────────────────────────────────
+
+func TestIntegration_ListCustomers_NoFilter(t *testing.T) {
+	db := setupDB(t)
+	repo := repository.NewCustomerRepository(db)
+	ctx := context.Background()
+
+	taxIDs := []string{"52998224725", "11144477735", "29715304346"}
+	for i, taxID := range taxIDs {
+		c := newPersistedCustomer()
+		c.Email = fmt.Sprintf("user%d@example.com", i)
+		c.TaxID = taxID
+		require.NoError(t, repo.CreateCustomer(ctx, c))
+	}
+
+	result, err := repo.ListCustomers(ctx, domain.ListParams{Page: 1, Limit: 20})
+
+	require.NoError(t, err)
+	assert.Equal(t, 3, result.Meta.Total)
+	assert.Equal(t, 1, result.Meta.TotalPages)
+	assert.Len(t, result.Data, 3)
+}
+
+func TestIntegration_ListCustomers_Pagination(t *testing.T) {
+	db := setupDB(t)
+	repo := repository.NewCustomerRepository(db)
+	ctx := context.Background()
+
+	taxIDs := []string{"52998224725", "11144477735", "29715304346", "62322729434", "66792954322"}
+	for i, taxID := range taxIDs {
+		c := newPersistedCustomer()
+		c.Email = fmt.Sprintf("page%d@example.com", i)
+		c.TaxID = taxID
+		require.NoError(t, repo.CreateCustomer(ctx, c))
+	}
+
+	page1, err := repo.ListCustomers(ctx, domain.ListParams{Page: 1, Limit: 2})
+	require.NoError(t, err)
+	assert.Equal(t, 5, page1.Meta.Total)
+	assert.Equal(t, 3, page1.Meta.TotalPages)
+	assert.Len(t, page1.Data, 2)
+
+	page3, err := repo.ListCustomers(ctx, domain.ListParams{Page: 3, Limit: 2})
+	require.NoError(t, err)
+	assert.Len(t, page3.Data, 1)
+}
+
+func TestIntegration_ListCustomers_StatusFilter(t *testing.T) {
+	db := setupDB(t)
+	repo := repository.NewCustomerRepository(db)
+	ctx := context.Background()
+
+	// pending
+	c1 := newPersistedCustomer()
+	c1.Email = "pending@example.com"
+	c1.TaxID = "52998224725"
+	require.NoError(t, repo.CreateCustomer(ctx, c1))
+
+	// approved
+	c2 := newPersistedCustomer()
+	c2.Email = "approved@example.com"
+	c2.TaxID = "11144477735"
+	require.NoError(t, repo.CreateCustomer(ctx, c2))
+	c2.Status = "approved"
+	c2.Version = 2
+	c2.UpdatedAt = time.Now().UTC()
+	require.NoError(t, repo.UpdateCustomer(ctx, c2))
+
+	result, err := repo.ListCustomers(ctx, domain.ListParams{Page: 1, Limit: 20, Status: "approved"})
+
+	require.NoError(t, err)
+	assert.Equal(t, 1, result.Meta.Total)
+	assert.Equal(t, "approved@example.com", result.Data[0].Email)
+}
+
+func TestIntegration_ListCustomers_SoftDeletedExcluded(t *testing.T) {
+	db := setupDB(t)
+	repo := repository.NewCustomerRepository(db)
+	ctx := context.Background()
+
+	c := newPersistedCustomer()
+	require.NoError(t, repo.CreateCustomer(ctx, c))
+	require.NoError(t, repo.SoftDelete(ctx, c.ID))
+
+	result, err := repo.ListCustomers(ctx, domain.ListParams{Page: 1, Limit: 20})
+
+	require.NoError(t, err)
+	assert.Equal(t, 0, result.Meta.Total)
+	assert.Empty(t, result.Data)
+}
+
+func TestIntegration_ListCustomers_EmptyDB(t *testing.T) {
+	db := setupDB(t)
+	repo := repository.NewCustomerRepository(db)
+	ctx := context.Background()
+
+	result, err := repo.ListCustomers(ctx, domain.ListParams{Page: 1, Limit: 20})
+
+	require.NoError(t, err)
+	assert.Equal(t, 0, result.Meta.Total)
+	assert.Empty(t, result.Data)
 }

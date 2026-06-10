@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 
 	"github.com/google/uuid"
 	"github.com/louisealberti/onboarding-api/internal/domain"
@@ -301,4 +302,75 @@ func (r *CustomerRepository) SoftDelete(ctx context.Context, id uuid.UUID) error
 	}
 
 	return nil
+}
+
+func (r *CustomerRepository) ListCustomers(ctx context.Context, params domain.ListParams) (*domain.PaginatedCustomers, error) {
+	offset := (params.Page - 1) * params.Limit
+
+	// Build WHERE clause — always excludes soft-deleted rows.
+	// Optional status filter is applied when provided.
+	where := "WHERE deleted_at IS NULL"
+	args := []any{}
+	argIdx := 1
+
+	if params.Status != "" {
+		where += " AND status = $" + fmt.Sprintf("%d", argIdx)
+		args = append(args, params.Status)
+		argIdx++
+	}
+
+	// COUNT total matching rows for pagination metadata.
+	var total int
+	countQuery := "SELECT COUNT(*) FROM customers " + where
+	if err := r.DB.QueryRowContext(ctx, countQuery, args...).Scan(&total); err != nil {
+		return nil, err
+	}
+
+	// Fetch the page.
+	args = append(args, params.Limit, offset)
+	listQuery := fmt.Sprintf(`
+		SELECT id, first_name, last_name, email, tax_id, country_code,
+		       status, version, created_at, updated_at
+		FROM customers
+		%s
+		ORDER BY created_at DESC
+		LIMIT $%d OFFSET $%d
+	`, where, argIdx, argIdx+1)
+
+	rows, err := r.DB.QueryContext(ctx, listQuery, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	customers := []domain.Customer{}
+	for rows.Next() {
+		var c domain.Customer
+		if err := rows.Scan(
+			&c.ID, &c.FirstName, &c.LastName, &c.Email,
+			&c.TaxID, &c.CountryCode, &c.Status, &c.Version,
+			&c.CreatedAt, &c.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		customers = append(customers, c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	totalPages := total / params.Limit
+	if total%params.Limit != 0 {
+		totalPages++
+	}
+
+	return &domain.PaginatedCustomers{
+		Data: customers,
+		Meta: domain.PageMeta{
+			Page:       params.Page,
+			Limit:      params.Limit,
+			Total:      total,
+			TotalPages: totalPages,
+		},
+	}, nil
 }

@@ -2,6 +2,7 @@ package handler
 
 import (
 	"net/http"
+	"strconv"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -114,4 +115,49 @@ func (h *CustomerHandler) UpdateStatus(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "status updated successfully"})
+}
+
+// ListCustomers handles GET /v1/customers.
+// If ?taxId= is present, delegates to SearchByTaxID (single-item lookup).
+// Otherwise, returns a paginated list with optional ?status= filter.
+func (h *CustomerHandler) ListCustomers(c *gin.Context) {
+	if c.Query("taxId") != "" {
+		h.SearchByTaxID(c)
+		return
+	}
+
+	page := 1
+	limit := 20
+
+	if p := c.Query("page"); p != "" {
+		if v, err := strconv.Atoi(p); err == nil && v > 0 {
+			page = v
+		} else {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "page must be a positive integer"})
+			return
+		}
+	}
+
+	if l := c.Query("limit"); l != "" {
+		if v, err := strconv.Atoi(l); err == nil && v > 0 && v <= 100 {
+			limit = v
+		} else {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "limit must be a positive integer up to 100"})
+			return
+		}
+	}
+
+	params := domain.ListParams{
+		Page:   page,
+		Limit:  limit,
+		Status: c.Query("status"),
+	}
+
+	result, err := h.srv.ListCustomers(c.Request.Context(), params)
+	if err != nil {
+		handleServiceError(c, err)
+		return
+	}
+
+	c.JSON(http.StatusOK, result)
 }

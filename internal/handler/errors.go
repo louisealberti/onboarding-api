@@ -36,6 +36,9 @@ func handleServiceError(c *gin.Context, err error) {
 	case errors.Is(err, service.ErrInvalidEmail):
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 
+	case errors.Is(err, service.ErrInvalidStatus):
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+
 	default:
 		// Unexpected Error — does not expose internaldetails
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal server error"})

@@ -13,4 +13,5 @@ var (
 	ErrCustomerIsBlocked       = errors.New("customer's status is 'blocked',no action is allowed")
 	ErrInvalidTaxID            = errors.New("invalid tax ID for the given country")
 	ErrInvalidStatusTransition = errors.New("invalid status transition")
+	ErrInvalidStatus           = errors.New("invalid status value")
 )
