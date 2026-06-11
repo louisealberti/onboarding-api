@@ -1,0 +1,368 @@
+definitions:
+  domain.Address:
+    properties:
+      city:
+        type: string
+      createdAt:
+        description: For Audit
+        type: string
+      customerId:
+        type: string
+      deletedAt:
+        description: Soft Delete
+        type: string
+      id:
+        type: string
+      postalCode:
+        type: string
+      state:
+        type: string
+      street:
+        type: string
+      updatedAt:
+        description: For Audit
+        type: string
+    type: object
+  domain.Customer:
+    properties:
+      address:
+        $ref: '#/definitions/domain.Address'
+      countryCode:
+        description: Tax residency / Tax jurisdiction (e.g., "BR", "US")
+        type: string
+      createdAt:
+        description: For Audit
+        type: string
+      deletedAt:
+        description: Soft Delete
+        type: string
+      email:
+        type: string
+      firstName:
+        type: string
+      id:
+        type: string
+      lastName:
+        type: string
+      phones:
+        items:
+          $ref: '#/definitions/domain.Phone'
+        type: array
+      status:
+        description: 'eg: "pending", "approved", "active", "blocked", "terminated"'
+        type: string
+      taxId:
+        description: Unique national identifier for tax purposes
+        type: string
+      updatedAt:
+        description: For Audit
+        type: string
+      version:
+        description: Concurrency Control
+        type: integer
+    type: object
+  domain.PageMeta:
+    properties:
+      limit:
+        type: integer
+      page:
+        type: integer
+      total:
+        type: integer
+      totalPages:
+        type: integer
+    type: object
+  domain.PaginatedCustomers:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/domain.Customer'
+        type: array
+      meta:
+        $ref: '#/definitions/domain.PageMeta'
+    type: object
+  domain.Phone:
+    properties:
+      areaCode:
+        type: string
+      countryCode:
+        type: string
+      createdAt:
+        description: For Audit
+        type: string
+      customerId:
+        type: string
+      deletedAt:
+        description: Soft Delete
+        type: string
+      id:
+        type: string
+      number:
+        type: string
+      type:
+        description: 'eg: "mobile", "landline"'
+        type: string
+      updatedAt:
+        description: For Audit
+        type: string
+    type: object
+info:
+  contact: {}
+paths:
+  /health:
+    get:
+      description: Returns the health status of the API and its dependencies. Returns
+        503 if the database is unreachable.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: API and database are healthy
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "503":
+          description: Database is unreachable
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Health check
+      tags:
+      - health
+  /v1/customers:
+    get:
+      description: Returns a paginated list of customers. If ?taxId= is provided,
+        delegates to tax ID search instead.
+      parameters:
+      - description: Search by tax ID (bypasses pagination)
+        in: query
+        name: taxId
+        type: string
+      - description: 'Page number (default: 1)'
+        in: query
+        name: page
+        type: integer
+      - description: 'Items per page, max 100 (default: 20)'
+        in: query
+        name: limit
+        type: integer
+      - description: Filter by status (pending, approved, active, suspended, blocked,
+          terminated)
+        in: query
+        name: status
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/domain.PaginatedCustomers'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: List customers
+      tags:
+      - customers
+    post:
+      consumes:
+      - application/json
+      description: 'Creates a new customer. TaxId must be valid for the given countryCode
+        (BR: CPF/CNPJ, US: SSN/EIN, GB: NI/UTR).'
+      parameters:
+      - description: Customer payload
+        in: body
+        name: customer
+        required: true
+        schema:
+          $ref: '#/definitions/domain.Customer'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/domain.Customer'
+        "400":
+          description: Validation error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "409":
+          description: Email already in use
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "422":
+          description: Invalid tax ID
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Create a customer
+      tags:
+      - customers
+  /v1/customers/{id}:
+    delete:
+      description: Soft-deletes a customer. Blocked customers cannot be deleted.
+      parameters:
+      - description: Customer UUID
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Customer is blocked
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Delete a customer
+      tags:
+      - customers
+    get:
+      description: Returns a single customer by UUID.
+      parameters:
+      - description: Customer UUID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/domain.Customer'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Get a customer by ID
+      tags:
+      - customers
+    put:
+      consumes:
+      - application/json
+      description: Full update of a customer's fields. Status and version are not
+        changed here — use PATCH /status for status transitions.
+      parameters:
+      - description: Customer UUID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Updated customer payload
+        in: body
+        name: customer
+        required: true
+        schema:
+          $ref: '#/definitions/domain.Customer'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Update a customer
+      tags:
+      - customers
+  /v1/customers/{id}/status:
+    patch:
+      consumes:
+      - application/json
+      description: 'Transitions a customer to a new status. Valid transitions: pending→approved,
+        pending→blocked, pending→terminated, approved→active, approved→blocked, approved→terminated,
+        active→suspended, active→blocked, active→terminated, suspended→active, suspended→blocked,
+        suspended→terminated, blocked→terminated.'
+      parameters:
+      - description: Customer UUID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: New status
+        in: body
+        name: body
+        required: true
+        schema:
+          additionalProperties:
+            type: string
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "422":
+          description: Invalid status transition
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Update customer status
+      tags:
+      - customers
+swagger: "2.0"

@@ -23,6 +23,15 @@ func NewHealthHandler(db *sql.DB, build BuildInfo) *HealthHandler {
 	return &HealthHandler{db: db, build: build}
 }
 
+// Health godoc
+//
+//	@Summary		Health check
+//	@Description	Returns the health status of the API and its dependencies. Returns 503 if the database is unreachable.
+//	@Tags			health
+//	@Produce		json
+//	@Success		200	{object}	map[string]string	"API and database are healthy"
+//	@Failure		503	{object}	map[string]string	"Database is unreachable"
+//	@Router			/health [get]
 func (h *HealthHandler) Health(c *gin.Context) {
 	dbStatus := "healthy"
 	httpStatus := http.StatusOK
