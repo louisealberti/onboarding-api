@@ -11,12 +11,15 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	_ "github.com/louisealberti/onboarding-api/docs"
 	"github.com/louisealberti/onboarding-api/internal/config"
 	"github.com/louisealberti/onboarding-api/internal/database"
 	"github.com/louisealberti/onboarding-api/internal/handler"
 	"github.com/louisealberti/onboarding-api/internal/middleware"
 	"github.com/louisealberti/onboarding-api/internal/repository"
 	"github.com/louisealberti/onboarding-api/internal/service"
+	swaggerFiles "github.com/swaggo/files"
+	ginSwagger "github.com/swaggo/gin-swagger"
 )
 
 // Injected at build time via:
@@ -53,14 +56,25 @@ func main() {
 		BuildTime: buildTime,
 	})
 
+	corsOrigins := os.Getenv("CORS_ORIGINS")
+	if corsOrigins == "" {
+		corsOrigins = "*"
+	}
+
 	r := gin.New()
 	r.Use(gin.Recovery())
+	r.Use(middleware.CORS([]string{corsOrigins}))
 	r.Use(middleware.RequestID())
 	r.Use(middleware.Logger(logger))
+
+	// Swagger UI — available at /swagger/index.html
+	r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
 
 	r.GET("/health", hh.Health)
 
 	v1 := r.Group("/v1")
+	// When /v2 is introduced, uncomment to signal deprecation:
+	// v1.Use(middleware.Deprecated("2027-01-01", "https://api.example.com/v2"))
 	v1.POST("/customers", h.CreateCustomer)
 	v1.PUT("/customers/:id", h.UpdateCustomer)
 	v1.PATCH("/customers/:id/status", h.UpdateStatus)
@@ -74,7 +88,11 @@ func main() {
 	}
 
 	go func() {
-		logger.Info("server starting", slog.String("port", cfg.ServerPort), slog.String("version", version))
+		logger.Info("server starting",
+			slog.String("port", cfg.ServerPort),
+			slog.String("version", version),
+			slog.String("swagger", "http://localhost:"+cfg.ServerPort+"/swagger/index.html"),
+		)
 		if err := srvHttp.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			logger.Error("failed to start server", slog.Any("error", err))
 			os.Exit(1)
