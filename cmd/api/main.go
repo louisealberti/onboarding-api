@@ -49,6 +49,7 @@ func main() {
 	defer db.Close()
 
 	repo := repository.NewCustomerRepository(db)
+	idempotencyRepo := repository.NewIdempotencyRepository(db)
 	svc := service.NewCustomerService(repo)
 	h := handler.NewCustomerHandler(svc)
 	hh := handler.NewHealthHandler(db, handler.BuildInfo{
@@ -75,7 +76,7 @@ func main() {
 	v1 := r.Group("/v1")
 	// When /v2 is introduced, uncomment to signal deprecation:
 	// v1.Use(middleware.Deprecated("2027-01-01", "https://api.example.com/v2"))
-	v1.POST("/customers", h.CreateCustomer)
+	v1.POST("/customers", middleware.Idempotency(idempotencyRepo), h.CreateCustomer)
 	v1.PUT("/customers/:id", h.UpdateCustomer)
 	v1.PATCH("/customers/:id/status", h.UpdateStatus)
 	v1.GET("/customers/:id", h.GetCustomerByID)
