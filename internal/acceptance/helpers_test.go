@@ -34,7 +34,10 @@ func setupDB(t *testing.T) *sql.DB {
 		postgres.WithDatabase("testdb"),
 		postgres.WithUsername("test"),
 		postgres.WithPassword("test"),
-		postgres.WithInitScripts("../../db/migrations/000001_create_customers_addresses_phones_tables.up.sql"),
+		postgres.WithInitScripts(
+			"../../db/migrations/000001_create_customers_addresses_phones_tables.up.sql",
+			"../../db/migrations/000003_create_idempotency_keys_table.up.sql",
+		),
 		testcontainers.WithWaitStrategy(
 			wait.ForLog("database system is ready to accept connections").
 				WithOccurrence(2).
@@ -63,6 +66,7 @@ func startServer(t *testing.T, db *sql.DB) *httptest.Server {
 	gin.SetMode(gin.TestMode)
 
 	repo := repository.NewCustomerRepository(db)
+	idempotencyRepo := repository.NewIdempotencyRepository(db)
 	svc := service.NewCustomerService(repo)
 	h := handler.NewCustomerHandler(svc)
 	hh := handler.NewHealthHandler(db, handler.BuildInfo{Version: "test", BuildTime: "unknown"})
@@ -73,7 +77,7 @@ func startServer(t *testing.T, db *sql.DB) *httptest.Server {
 	r.GET("/health", hh.Health)
 
 	v1 := r.Group("/v1")
-	v1.POST("/customers", h.CreateCustomer)
+	v1.POST("/customers", middleware.Idempotency(idempotencyRepo), h.CreateCustomer)
 	v1.GET("/customers/:id", h.GetCustomerByID)
 	v1.GET("/customers", h.ListCustomers)
 	v1.PUT("/customers/:id", h.UpdateCustomer)
@@ -121,6 +125,20 @@ func apiDelete(t *testing.T, srv *httptest.Server, path string) *http.Response {
 	t.Helper()
 	req, err := http.NewRequest(http.MethodDelete, srv.URL+path, nil)
 	require.NoError(t, err)
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	return resp
+}
+
+// apiPostWithKey dispara um POST com um Idempotency-Key header.
+func apiPostWithKey(t *testing.T, srv *httptest.Server, path string, body map[string]any, key string) *http.Response {
+	t.Helper()
+	b, err := json.Marshal(body)
+	require.NoError(t, err)
+	req, err := http.NewRequest(http.MethodPost, srv.URL+path, bytes.NewReader(b))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Idempotency-Key", key)
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
 	return resp
