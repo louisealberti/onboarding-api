@@ -37,6 +37,7 @@ func setupDB(t *testing.T) *sql.DB {
 		postgres.WithInitScripts(
 			"../../db/migrations/000001_create_customers_addresses_phones_tables.up.sql",
 			"../../db/migrations/000003_create_idempotency_keys_table.up.sql",
+			"../../db/migrations/000004_create_audit_logs_table.up.sql",
 		),
 		testcontainers.WithWaitStrategy(
 			wait.ForLog("database system is ready to accept connections").
@@ -67,7 +68,10 @@ func startServer(t *testing.T, db *sql.DB) *httptest.Server {
 
 	repo := repository.NewCustomerRepository(db)
 	idempotencyRepo := repository.NewIdempotencyRepository(db)
-	svc := service.NewCustomerService(repo)
+	auditRepo := repository.NewAuditRepository(db)
+	auditSvc := service.NewAuditService(auditRepo)
+	svc := service.NewCustomerService(repo).WithAudit(auditSvc)
+	ah := handler.NewAuditHandler(auditSvc)
 	h := handler.NewCustomerHandler(svc)
 	hh := handler.NewHealthHandler(db, handler.BuildInfo{Version: "test", BuildTime: "unknown"})
 
@@ -80,6 +84,7 @@ func startServer(t *testing.T, db *sql.DB) *httptest.Server {
 	v1.POST("/customers", middleware.Idempotency(idempotencyRepo), h.CreateCustomer)
 	v1.GET("/customers/:id", h.GetCustomerByID)
 	v1.GET("/customers", h.ListCustomers)
+	v1.GET("/customers/:id/audit", ah.GetAuditLog)
 	v1.PUT("/customers/:id", h.UpdateCustomer)
 	v1.PATCH("/customers/:id/status", h.UpdateStatus)
 	v1.DELETE("/customers/:id", h.DeleteCustomer)

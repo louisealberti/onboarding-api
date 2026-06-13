@@ -16,11 +16,19 @@ import (
 // REGRAS DE NEGOCIO
 
 type CustomerService struct {
-	repo domain.CustomerRepository // Dependency Injection (Interface)
+	repo  domain.CustomerRepository // Dependency Injection (Interface)
+	audit *AuditService
 }
 
 func NewCustomerService(repo domain.CustomerRepository) *CustomerService {
 	return &CustomerService{repo: repo}
+}
+
+// WithAudit attaches an AuditService to record changes.
+// Call this after NewCustomerService when audit logging is desired.
+func (s *CustomerService) WithAudit(audit *AuditService) *CustomerService {
+	s.audit = audit
+	return s
 }
 
 func (s *CustomerService) CreateCustomer(ctx context.Context, c *domain.Customer) error {
@@ -70,7 +78,17 @@ func (s *CustomerService) CreateCustomer(ctx context.Context, c *domain.Customer
 		c.Phones[i].UpdatedAt = now
 	}
 
-	return s.repo.CreateCustomer(ctx, c)
+	if err := s.repo.CreateCustomer(ctx, c); err != nil {
+		return err
+	}
+	if s.audit != nil {
+		changedBy, _ := ctx.Value("changed_by").(string)
+		if changedBy == "" {
+			changedBy = "system"
+		}
+		s.audit.LogCreated(ctx, c, changedBy)
+	}
+	return nil
 }
 
 func (s *CustomerService) SearchCustomer(ctx context.Context, id uuid.UUID) (*domain.Customer, error) {
@@ -206,11 +224,22 @@ func (s *CustomerService) UpdateStatus(ctx context.Context, id uuid.UUID, newSta
 		return ErrInvalidStatusTransition
 	}
 
+	oldStatus := customer.Status
 	customer.Status = newStatus
 	customer.Version = customer.Version + 1
 	customer.UpdatedAt = time.Now().UTC()
 
-	return s.repo.UpdateCustomer(ctx, customer)
+	if err := s.repo.UpdateCustomer(ctx, customer); err != nil {
+		return err
+	}
+	if s.audit != nil {
+		changedBy, _ := ctx.Value("changed_by").(string)
+		if changedBy == "" {
+			changedBy = "system"
+		}
+		s.audit.LogStatusChanged(ctx, customer.ID, oldStatus, newStatus, changedBy)
+	}
+	return nil
 }
 
 func findPhoneByNumber(number string, phones []domain.Phone) *domain.Phone {
