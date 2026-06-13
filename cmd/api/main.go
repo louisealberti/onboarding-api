@@ -50,8 +50,11 @@ func main() {
 
 	repo := repository.NewCustomerRepository(db)
 	idempotencyRepo := repository.NewIdempotencyRepository(db)
-	svc := service.NewCustomerService(repo)
+	auditRepo := repository.NewAuditRepository(db)
+	auditSvc := service.NewAuditService(auditRepo)
+	svc := service.NewCustomerService(repo).WithAudit(auditSvc)
 	h := handler.NewCustomerHandler(svc)
+	ah := handler.NewAuditHandler(auditSvc)
 	hh := handler.NewHealthHandler(db, handler.BuildInfo{
 		Version:   version,
 		BuildTime: buildTime,
@@ -67,6 +70,7 @@ func main() {
 	r.Use(middleware.CORS([]string{corsOrigins}))
 	r.Use(middleware.RequestID())
 	r.Use(middleware.Logger(logger))
+	r.Use(middleware.ChangedBy())
 
 	// Swagger UI — available at /swagger/index.html
 	r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
@@ -81,6 +85,7 @@ func main() {
 	v1.PATCH("/customers/:id/status", h.UpdateStatus)
 	v1.GET("/customers/:id", h.GetCustomerByID)
 	v1.GET("/customers", h.ListCustomers)
+	v1.GET("/customers/:id/audit", ah.GetAuditLog)
 	v1.DELETE("/customers/:id", h.DeleteCustomer)
 
 	srvHttp := &http.Server{
