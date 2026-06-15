@@ -83,16 +83,19 @@ func main() {
 	r.Use(middleware.RequestID())
 	r.Use(middleware.Logger(logger))
 
-	// Public routes
+	// Public routes — rate limited by IP (10 req/s, burst 20)
+	publicRL := middleware.RateLimitByIP(10, 20)
 	r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
-	r.GET("/health", hh.Health)
-	r.POST("/auth/token", authH.Token)
+	r.GET("/health", publicRL, hh.Health)
+	r.POST("/auth/token", publicRL, authH.Token)
 
-	// Protected routes
+	// Protected routes — rate limited by JWT subject (20 req/s, burst 40)
 	authMiddleware := middleware.Auth(publicKey)
+	protectedRL := middleware.RateLimitBySubject(20, 40)
 
 	v1 := r.Group("/v1")
 	v1.Use(authMiddleware)
+	v1.Use(protectedRL)
 	// When /v2 is introduced, uncomment to signal deprecation:
 	// v1.Use(middleware.Deprecated("2027-01-01", "https://api.example.com/v2"))
 
