@@ -23,6 +23,7 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/modules/postgres"
 	"github.com/testcontainers/testcontainers-go/wait"
+	"golang.org/x/time/rate"
 )
 
 // setupDB sobe um container Postgres e aplica as migrations.
@@ -106,6 +107,7 @@ func startServer(t *testing.T, db *sql.DB) *httptest.Server {
 
 	v1 := r.Group("/v1")
 	v1.Use(authMiddleware)
+	v1.Use(middleware.RateLimitBySubject(1000, 2000)) // very high limit in tests
 	v1.POST("/customers", middleware.RequireRole("admin"), middleware.Idempotency(idempotencyRepo), h.CreateCustomer)
 	v1.GET("/customers/:id", h.GetCustomerByID)
 	v1.GET("/customers", h.ListCustomers)
@@ -174,6 +176,43 @@ func apiDelete(t *testing.T, srv *httptest.Server, path string) *http.Response {
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
 	return resp
+}
+
+// startServerWithRateLimit cria um servidor com rate limit configurável para testes de rate limiting.
+func startServerWithRateLimit(t *testing.T, db *sql.DB, r rate.Limit, b int) *httptest.Server {
+	t.Helper()
+
+	gin.SetMode(gin.TestMode)
+
+	repo := repository.NewCustomerRepository(db)
+	idempotencyRepo := repository.NewIdempotencyRepository(db)
+	auditRepo := repository.NewAuditRepository(db)
+	auditSvc := service.NewAuditService(auditRepo)
+	svc := service.NewCustomerService(repo).WithAudit(auditSvc)
+	ah := handler.NewAuditHandler(auditSvc)
+	h := handler.NewCustomerHandler(svc)
+	hh := handler.NewHealthHandler(db, handler.BuildInfo{Version: "test", BuildTime: "unknown"})
+
+	router := gin.New()
+	router.Use(middleware.RequestID())
+	authMW := middleware.Auth(&testRSAKey.PublicKey)
+	router.POST("/auth/token", handler.NewAuthHandler(testRSAKey).Token)
+	router.GET("/health", hh.Health)
+
+	v1 := router.Group("/v1")
+	v1.Use(authMW)
+	v1.Use(middleware.RateLimitBySubject(r, b))
+	v1.POST("/customers", middleware.RequireRole("admin"), middleware.Idempotency(idempotencyRepo), h.CreateCustomer)
+	v1.GET("/customers/:id", middleware.RequireRole("admin", "operator"), h.GetCustomerByID)
+	v1.GET("/customers", middleware.RequireRole("admin", "operator"), h.ListCustomers)
+	v1.PUT("/customers/:id", middleware.RequireRole("admin"), h.UpdateCustomer)
+	v1.PATCH("/customers/:id/status", middleware.RequireRole("admin", "operator"), h.UpdateStatus)
+	v1.DELETE("/customers/:id", middleware.RequireRole("admin"), h.DeleteCustomer)
+	v1.GET("/customers/:id/audit", middleware.RequireRole("admin", "operator"), ah.GetAuditLog)
+
+	srv := httptest.NewServer(router)
+	t.Cleanup(srv.Close)
+	return srv
 }
 
 // apiPostWithKey dispara um POST com um Idempotency-Key header.
