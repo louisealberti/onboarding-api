@@ -89,8 +89,10 @@ func TestAcceptance_CreateCustomer_Errors(t *testing.T) {
 	})
 
 	t.Run("body inválido (não é JSON) retorna 400", func(t *testing.T) {
-		// apiPost serializa map, então usamos http diretamente aqui
-		resp, err := http.Post(srv.URL+"/v1/customers", "application/json", nil)
+		req, _ := http.NewRequest(http.MethodPost, srv.URL+"/v1/customers", nil)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+GenerateTestToken(t, "test-admin", "admin"))
+		resp, err := http.DefaultClient.Do(req)
 		require.NoError(t, err)
 		defer resp.Body.Close()
 
