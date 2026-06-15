@@ -8,26 +8,30 @@ import (
 )
 
 type Config struct {
-	DBHost     string
-	DBPort     string
-	DBUser     string
-	DBPassword string
-	DBName     string
-	DBSSLMode  string
-	ServerPort string
+	DBHost        string
+	DBPort        string
+	DBUser        string
+	DBPassword    string
+	DBName        string
+	DBSSLMode     string
+	ServerPort    string
+	JWTPrivateKey string // path to RSA private key PEM (used by auth endpoint)
+	JWTPublicKey  string // path to RSA public key PEM (used by auth middleware)
 }
 
 func Load() (*Config, error) {
 	_ = godotenv.Load()
 
 	cfg := &Config{
-		DBHost:     os.Getenv("DB_HOST"),
-		DBPort:     getEnvOrDefault("DB_PORT", "5432"),
-		DBUser:     os.Getenv("DB_USER"),
-		DBPassword: os.Getenv("DB_PASSWORD"),
-		DBName:     os.Getenv("DB_NAME"),
-		DBSSLMode:  getEnvOrDefault("DB_SSLMODE", "disable"),
-		ServerPort: getEnvOrDefault("SERVER_PORT", "8080"),
+		DBHost:        os.Getenv("DB_HOST"),
+		DBPort:        getEnvOrDefault("DB_PORT", "5432"),
+		DBUser:        os.Getenv("DB_USER"),
+		DBPassword:    os.Getenv("DB_PASSWORD"),
+		DBName:        os.Getenv("DB_NAME"),
+		DBSSLMode:     getEnvOrDefault("DB_SSLMODE", "disable"),
+		ServerPort:    getEnvOrDefault("SERVER_PORT", "8080"),
+		JWTPrivateKey: getEnvOrDefault("JWT_PRIVATE_KEY_PATH", "keys/private.pem"),
+		JWTPublicKey:  getEnvOrDefault("JWT_PUBLIC_KEY_PATH", "keys/public.pem"),
 	}
 
 	if err := cfg.validate(); err != nil {

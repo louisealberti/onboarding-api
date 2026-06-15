@@ -3,6 +3,8 @@ package acceptance_test
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
 	"database/sql"
 	"encoding/json"
 	"net/http"
@@ -11,6 +13,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/golang-jwt/jwt/v5"
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/louisealberti/onboarding-api/internal/handler"
 	"github.com/louisealberti/onboarding-api/internal/middleware"
@@ -61,6 +64,25 @@ func setupDB(t *testing.T) *sql.DB {
 
 // startServer monta a stack completa (repo → service → handler → gin)
 // e devolve um httptest.Server real. O servidor é encerrado via t.Cleanup.
+// testRSAKey holds an in-memory RSA key pair generated once per test binary run.
+var testRSAKey, _ = rsa.GenerateKey(rand.Reader, 2048)
+
+// GenerateTestToken creates a signed JWT for use in acceptance tests.
+func GenerateTestToken(t *testing.T, subject, role string) string {
+	t.Helper()
+	claims := jwt.MapClaims{
+		"sub":  subject,
+		"role": role,
+		"exp":  time.Now().Add(time.Hour).Unix(),
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+	signed, err := token.SignedString(testRSAKey)
+	if err != nil {
+		t.Fatalf("failed to generate test token: %v", err)
+	}
+	return signed
+}
+
 func startServer(t *testing.T, db *sql.DB) *httptest.Server {
 	t.Helper()
 
@@ -77,11 +99,14 @@ func startServer(t *testing.T, db *sql.DB) *httptest.Server {
 
 	r := gin.New()
 	r.Use(middleware.RequestID())
+	authMiddleware := middleware.Auth(&testRSAKey.PublicKey)
 
 	r.GET("/health", hh.Health)
+	r.POST("/auth/token", handler.NewAuthHandler(testRSAKey).Token)
 
 	v1 := r.Group("/v1")
-	v1.POST("/customers", middleware.Idempotency(idempotencyRepo), h.CreateCustomer)
+	v1.Use(authMiddleware)
+	v1.POST("/customers", middleware.RequireRole("admin"), middleware.Idempotency(idempotencyRepo), h.CreateCustomer)
 	v1.GET("/customers/:id", h.GetCustomerByID)
 	v1.GET("/customers", h.ListCustomers)
 	v1.GET("/customers/:id/audit", ah.GetAuditLog)
@@ -100,9 +125,20 @@ func startServer(t *testing.T, db *sql.DB) *httptest.Server {
 
 func apiPost(t *testing.T, srv *httptest.Server, path string, body map[string]any) *http.Response {
 	t.Helper()
+	return apiPostAs(t, srv, path, body, GenerateTestToken(t, "test-admin", "admin"))
+}
+
+func apiPostAs(t *testing.T, srv *httptest.Server, path string, body map[string]any, token string) *http.Response {
+	t.Helper()
 	b, err := json.Marshal(body)
 	require.NoError(t, err)
-	resp, err := http.Post(srv.URL+path, "application/json", bytes.NewReader(b))
+	req, err := http.NewRequest(http.MethodPost, srv.URL+path, bytes.NewReader(b))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
 	return resp
 }
@@ -114,6 +150,7 @@ func apiPatch(t *testing.T, srv *httptest.Server, path string, body map[string]a
 	req, err := http.NewRequest(http.MethodPatch, srv.URL+path, bytes.NewReader(b))
 	require.NoError(t, err)
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+GenerateTestToken(t, "test-admin", "admin"))
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
 	return resp
@@ -121,7 +158,10 @@ func apiPatch(t *testing.T, srv *httptest.Server, path string, body map[string]a
 
 func apiGet(t *testing.T, srv *httptest.Server, path string) *http.Response {
 	t.Helper()
-	resp, err := http.Get(srv.URL + path)
+	req, err := http.NewRequest(http.MethodGet, srv.URL+path, nil)
+	require.NoError(t, err)
+	req.Header.Set("Authorization", "Bearer "+GenerateTestToken(t, "test-admin", "admin"))
+	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
 	return resp
 }
@@ -130,6 +170,7 @@ func apiDelete(t *testing.T, srv *httptest.Server, path string) *http.Response {
 	t.Helper()
 	req, err := http.NewRequest(http.MethodDelete, srv.URL+path, nil)
 	require.NoError(t, err)
+	req.Header.Set("Authorization", "Bearer "+GenerateTestToken(t, "test-admin", "admin"))
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
 	return resp
@@ -144,9 +185,25 @@ func apiPostWithKey(t *testing.T, srv *httptest.Server, path string, body map[st
 	require.NoError(t, err)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Idempotency-Key", key)
+	req.Header.Set("Authorization", "Bearer "+GenerateTestToken(t, "test-admin", "admin"))
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
 	return resp
+}
+
+// newRequestNoAuth cria uma request sem header de autorização.
+func newRequestNoAuth(method, url string, body []byte) (*http.Request, error) {
+	return http.NewRequest(method, url, nil)
+}
+
+// newRequestWithToken cria uma request com o token informado.
+func newRequestWithToken(method, url string, body []byte, token string) (*http.Request, error) {
+	req, err := http.NewRequest(method, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	return req, nil
 }
 
 // decodeBody faz o decode do JSON da response num map e fecha o body.
