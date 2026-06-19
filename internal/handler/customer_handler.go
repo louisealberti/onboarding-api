@@ -221,10 +221,16 @@ func (h *CustomerHandler) ListCustomers(c *gin.Context) {
 		}
 	}
 
+	status := c.Query("status")
+	if status != "" && !domain.IsValidStatus(status) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid status filter"})
+		return
+	}
+
 	params := domain.ListParams{
 		Page:   page,
 		Limit:  limit,
-		Status: c.Query("status"),
+		Status: status,
 	}
 
 	result, err := h.srv.ListCustomers(c.Request.Context(), params)
