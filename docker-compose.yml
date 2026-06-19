@@ -1,18 +1,78 @@
-version: '3.8'
-
+# Local development stack: API + PostgreSQL, with migrations applied
+# automatically on startup.
+#
+# Prerequisite: the RSA key pair under ./keys/ (private.pem, public.pem)
+# must exist before running this file — `api` mounts it read-only and will
+# fail to start otherwise. Run `make docker-up` instead of `docker compose up`
+# directly; it generates the keys first if they're missing.
 services:
-  database:
-    image: postgres:15
-    container_name: postgres-db
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
     environment:
-      POSTGRES_USER: myuser
-      POSTGRES_PASSWORD: mysecretpassword
-      POSTGRES_DB: mydb
-    ports:
-      - "5432:5432"
+      POSTGRES_USER: ${DB_USER:-myuser}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-mysecretpassword}
+      POSTGRES_DB: ${DB_NAME:-mydb}
+    # Not exposed to the host by default — only `migrate` and `api` need it,
+    # and both reach it over the internal Compose network as `postgres:5432`.
+    # Uncomment if you want to connect a local DB client (psql, DBeaver, etc):
+    # ports:
+    #   - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-myuser} -d ${DB_NAME:-mydb}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # Runs all pending migrations against `postgres`, then exits (code 0).
+  # `api` waits for this to finish successfully before starting.
+  migrate:
+    image: migrate/migrate:v4.17.1
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./db/migrations:/migrations
+    command:
+      - "-path=/migrations"
+      - "-database=postgres://${DB_USER:-myuser}:${DB_PASSWORD:-mysecretpassword}@postgres:5432/${DB_NAME:-mydb}?sslmode=disable"
+      - "up"
+    restart: "no"
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
     restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: ${DB_USER:-myuser}
+      DB_PASSWORD: ${DB_PASSWORD:-mysecretpassword}
+      DB_NAME: ${DB_NAME:-mydb}
+      DB_SSLMODE: disable
+      SERVER_PORT: 8080
+      CORS_ORIGINS: ${CORS_ORIGINS:-*}
+      JWT_PRIVATE_KEY_PATH: /app/keys/private.pem
+      JWT_PUBLIC_KEY_PATH: /app/keys/public.pem
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./keys:/app/keys:ro
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
 
 volumes:
   postgres_data:
+    driver: local

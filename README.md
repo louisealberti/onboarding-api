@@ -1,8 +1,4 @@
 [![CI](https://github.com/louisealberti/onboarding-api/actions/workflows/ci.yml/badge.svg)](https://github.com/louisealberti/onboarding-api/actions/workflows/ci.yml)
-![Supported Go Versions](https://img.shields.io/badge/Go-1.20%2C%201.21-lightgrey.svg)
-[![GitHub Release](https://img.shields.io/github/release/golang-migrate/migrate.svg)](https://github.com/golang-migrate/migrate/releases)
-[![Go Report Card](https://goreportcard.com/badge/github.com/golang-migrate/migrate/v4)](https://goreportcard.com/report/github.com/golang-migrate/migrate/v4)
-
 
 # Customer Onboarding API
 
@@ -28,6 +24,7 @@ This API handles the full lifecycle of a customer in a payment/digital wallet pr
 | Migrations | `golang-migrate` |
 | Testing | `testify`, `testcontainers-go` |
 | Documentation | Swagger/OpenAPI (`swaggo/swag`) |
+| CI | GitHub Actions |
 
 ---
 
@@ -44,15 +41,19 @@ internal/
   database/                 ← PostgreSQL connection
   domain/                   ← entities, interfaces, state machine
   handler/                  ← HTTP handlers (Gin)
-  middleware/               ← Auth, CORS, rate limit, logging, idempotency
+  middleware/               ← Auth, CORS, rate limit, logging, idempotency, HSTS
   repository/               ← database access (pgx)
+  sanitize/                 ← free-text input sanitization (XSS defense-in-depth)
   service/                  ← business logic
   validation/               ← email and tax ID validators (CPF, CNPJ, SSN, EIN, NI, UTR)
-  acceptance/               ← end-to-end tests (httptest + testcontainers)
+  acceptance/                ← end-to-end tests (httptest + testcontainers)
 
 db/migrations/              ← SQL migrations (golang-migrate)
 docs/                       ← Swagger generated files
 keys/                       ← RSA key pair (not committed)
+
+Dockerfile                  ← multi-stage build for the API image
+docker-compose.yml          ← API + PostgreSQL + migrations, for local development
 ```
 
 **Request flow:** `Handler → Service → Repository → PostgreSQL`
@@ -115,7 +116,7 @@ All `/v1/*` endpoints require a Bearer JWT token. Swagger UI is available at `ht
 ### Query parameters for `GET /v1/customers`
 - `?taxId=<value>` — search by tax ID (bypasses pagination)
 - `?page=1&limit=20` — paginated listing
-- `?status=approved` — filter by status
+- `?status=approved` — filter by status (must be one of the known state-machine statuses; unrecognized values return `400`)
 
 ---
 
@@ -137,6 +138,9 @@ All `/v1/*` endpoints require a Bearer JWT token. Swagger UI is available at `ht
 
 ### CORS
 Configurable via `CORS_ORIGINS` environment variable. Defaults to `*` in development.
+
+### Input sanitization
+Free-text fields (`firstName`, `lastName`, address fields) are sanitized in the service layer before being persisted: trimmed, stripped of control characters, HTML-escaped against XSS, and length-capped. SQL injection is mitigated structurally — every repository query uses parameterized placeholders (`$1`, `$2`, ...) via `database/sql`/`pgx`, never string concatenation. The `status` filter on `GET /v1/customers` is validated against the known state-machine enum rather than passed through as an arbitrary string.
 
 ---
 
@@ -176,6 +180,27 @@ All requests are logged as JSON with `slog` (stdlib): method, path, status, late
 ---
 
 ## Running Locally
+
+### Option 1: Docker Compose (recommended)
+
+Spins up the full stack — API + PostgreSQL — and runs all migrations automatically. No local Go or PostgreSQL installation required, only Docker.
+
+```bash
+git clone https://github.com/louisealberti/onboarding-api
+cd onboarding-api
+make docker-up
+```
+
+`make docker-up` generates the RSA key pair (`keys/`) if it doesn't exist yet, then builds the API image and starts everything in the background. The API will be available at `http://localhost:8080`, with Swagger UI at `http://localhost:8080/swagger/index.html`.
+
+```bash
+make docker-logs   # tail logs from API + Postgres
+make docker-down   # stop everything (Postgres data persists in a named volume)
+```
+
+Environment variables for the containers (DB credentials, CORS origins) can be overridden via a `.env` file in the project root — `docker compose` reads it automatically. See [Environment Variables](#environment-variables) below; the same variable names apply.
+
+### Option 2: Run Go directly
 
 ### Prerequisites
 - Go 1.21+
@@ -250,6 +275,9 @@ go tool cover -func=coverage.out
 - **Integration tests** — repository layer against real PostgreSQL via `testcontainers-go`
 - **Acceptance tests** — full stack via `httptest.Server` + real PostgreSQL, covering happy paths, error cases, state machine flows, idempotency, auth, and rate limiting
 
+### CI
+Every push and pull request against `main`/`develop` runs two GitHub Actions jobs: `vet` + `build` + unit tests (no Docker), and integration + acceptance tests (Docker-in-Docker, required by `testcontainers-go`). See `.github/workflows/ci.yml`.
+
 ---
 
 ## Build with version info
@@ -300,14 +328,16 @@ Keeping idempotency keys in the same database as customers ensures consistency w
 **Why `log/slog` over zerolog/zap?**
 `slog` is part of the Go standard library since 1.21. Zero external dependencies, JSON output out of the box, and the API surface is intentionally simple. For this project's observability needs it is more than sufficient, and it avoids adding a dependency that would require explanation to reviewers.
 
+**Why does `docker-compose.yml` only include the API and PostgreSQL?**
+Redis and Kafka are listed under Next Steps but have no corresponding code yet — no cache reads/writes, no event publishing or consumption. Adding those containers to the compose file now would stand up infrastructure with nothing using it, which is misleading about the project's actual state. Each will be added to the compose file in the same change that introduces its first real usage in the code.
+
 ---
 
 ## Next Steps
 
 - [ ] Webhook — notify external systems on status changes
-- [ ] Docker Compose — full local stack (API + PostgreSQL)
-- [ ] CI/CD — GitHub Actions running tests on every PR
-- [ ] Deploy on AWS (ECS + RDS)
+- [ ] Deploy on AWS (ECS + RDS), with HTTPS/TLS terminated at the ALB (ACM certificate + HTTPS listener)
 - [ ] Redis — cache for frequent taxId/ID lookups
 - [ ] Prometheus metrics + Grafana dashboard
 - [ ] gRPC integration with Ledger service
+- [ ] Kafka — domain events (depends on a concrete use case being implemented first, not just the broker)
