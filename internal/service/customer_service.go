@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/louisealberti/onboarding-api/internal/domain"
+	"github.com/louisealberti/onboarding-api/internal/sanitize"
 	"github.com/louisealberti/onboarding-api/internal/validation/email"
 	"github.com/louisealberti/onboarding-api/internal/validation/taxid"
 )
@@ -32,6 +33,7 @@ func (s *CustomerService) WithAudit(audit *AuditService) *CustomerService {
 }
 
 func (s *CustomerService) CreateCustomer(ctx context.Context, c *domain.Customer) error {
+	sanitize.ApplyToCustomer(c)
 	c.Email = strings.ToLower(strings.TrimSpace(c.Email))
 	if c.Email == "" {
 		return ErrMissingEmail
@@ -114,6 +116,7 @@ func (s *CustomerService) SearchByTaxID(ctx context.Context, taxID string) (*dom
 }
 
 func (s *CustomerService) UpdateCustomer(ctx context.Context, updatedCustomer *domain.Customer) error {
+	sanitize.ApplyToCustomer(updatedCustomer)
 	updatedCustomer.Email = strings.ToLower(strings.TrimSpace(updatedCustomer.Email))
 	if updatedCustomer.Email == "" {
 		return ErrMissingEmail

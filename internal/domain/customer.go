@@ -56,6 +56,24 @@ var validTransitions = map[string][]string{
 	"blocked":   {"active", "terminated"},
 }
 
+// validStatuses is the full set of recognized status values, derived from
+// validTransitions plus "terminated" (a valid target with no outgoing
+// transitions of its own). Used to validate the ?status= filter so that
+// arbitrary strings don't silently pass through to the query layer.
+var validStatuses = map[string]bool{
+	"pending":    true,
+	"approved":   true,
+	"active":     true,
+	"suspended":  true,
+	"blocked":    true,
+	"terminated": true,
+}
+
+// IsValidStatus reports whether s is one of the known customer statuses.
+func IsValidStatus(s string) bool {
+	return validStatuses[s]
+}
+
 func (c *Customer) CanTransitionTo(newStatus string) bool {
 	allowed, ok := validTransitions[c.Status]
 	if !ok {
