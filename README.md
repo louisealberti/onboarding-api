@@ -200,6 +200,18 @@ make docker-down   # stop everything (Postgres data persists in a named volume)
 
 Environment variables for the containers (DB credentials, CORS origins) can be overridden via a `.env` file in the project root — `docker compose` reads it automatically. See [Environment Variables](#environment-variables) below; the same variable names apply.
 
+#### Troubleshooting
+
+**`database files are incompatible with server` / Postgres container exits on startup.**
+The named volume `postgres_data` already has data from a different PostgreSQL major version (e.g. a previous local setup running v15). Reset it:
+```bash
+docker compose down -v
+make docker-up
+```
+
+**`port is already allocated` on `5432`.**
+Another PostgreSQL instance (local install, another project's container) is already using that port. By default this compose file does **not** publish `5432` to the host — only `api` and `migrate` reach it internally — so this should only come up if you uncommented the `ports:` block under `postgres` in `docker-compose.yml`. Either stop the other instance or keep that port unpublished.
+
 ### Option 2: Run Go directly
 
 ### Prerequisites
