@@ -1,2 +1,4 @@
 .env
 keys/
+bin/
+coverage.out
