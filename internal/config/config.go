@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 
 	"github.com/joho/godotenv"
@@ -17,6 +18,8 @@ type Config struct {
 	ServerPort    string
 	JWTPrivateKey string // path to RSA private key PEM (used by auth endpoint)
 	JWTPublicKey  string // path to RSA public key PEM (used by auth middleware)
+	WebhookURL    string // destination URL for status-change notifications; empty disables webhooks
+	WebhookSecret string // HMAC-SHA256 signing secret for the X-Webhook-Signature header
 }
 
 func Load() (*Config, error) {
@@ -32,6 +35,8 @@ func Load() (*Config, error) {
 		ServerPort:    getEnvOrDefault("SERVER_PORT", "8080"),
 		JWTPrivateKey: getEnvOrDefault("JWT_PRIVATE_KEY_PATH", "keys/private.pem"),
 		JWTPublicKey:  getEnvOrDefault("JWT_PUBLIC_KEY_PATH", "keys/public.pem"),
+		WebhookURL:    os.Getenv("WEBHOOK_URL"),
+		WebhookSecret: os.Getenv("WEBHOOK_SECRET"),
 	}
 
 	if err := cfg.validate(); err != nil {
@@ -53,7 +58,20 @@ func (c *Config) validate() error {
 			return fmt.Errorf("variável de ambiente obrigatória não definida: %s", key)
 		}
 	}
+
+	if c.WebhookURL != "" {
+		u, err := url.Parse(c.WebhookURL)
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+			return fmt.Errorf("WEBHOOK_URL inválida: deve ser uma URL http(s) completa")
+		}
+	}
+
 	return nil
+}
+
+// WebhookEnabled reports whether a webhook destination is configured.
+func (c *Config) WebhookEnabled() bool {
+	return c.WebhookURL != ""
 }
 
 func getEnvOrDefault(key, defaultVal string) string {

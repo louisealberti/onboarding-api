@@ -62,6 +62,8 @@ services:
       CORS_ORIGINS: ${CORS_ORIGINS:-*}
       JWT_PRIVATE_KEY_PATH: /app/keys/private.pem
       JWT_PUBLIC_KEY_PATH: /app/keys/public.pem
+      WEBHOOK_URL: ${WEBHOOK_URL:-}
+      WEBHOOK_SECRET: ${WEBHOOK_SECRET:-}
     ports:
       - "8080:8080"
     volumes:

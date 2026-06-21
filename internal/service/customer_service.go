@@ -12,13 +12,15 @@ import (
 	"github.com/louisealberti/onboarding-api/internal/sanitize"
 	"github.com/louisealberti/onboarding-api/internal/validation/email"
 	"github.com/louisealberti/onboarding-api/internal/validation/taxid"
+	"github.com/louisealberti/onboarding-api/internal/webhook"
 )
 
 // REGRAS DE NEGOCIO
 
 type CustomerService struct {
-	repo  domain.CustomerRepository // Dependency Injection (Interface)
-	audit *AuditService
+	repo    domain.CustomerRepository // Dependency Injection (Interface)
+	audit   *AuditService
+	webhook *webhook.Notifier
 }
 
 func NewCustomerService(repo domain.CustomerRepository) *CustomerService {
@@ -29,6 +31,15 @@ func NewCustomerService(repo domain.CustomerRepository) *CustomerService {
 // Call this after NewCustomerService when audit logging is desired.
 func (s *CustomerService) WithAudit(audit *AuditService) *CustomerService {
 	s.audit = audit
+	return s
+}
+
+// WithWebhook attaches a webhook.Notifier so that status changes are
+// reported to an external system. Call this after NewCustomerService when
+// webhook notifications are desired; omit it (or pass nil) to disable them,
+// e.g. when config.WebhookEnabled() is false.
+func (s *CustomerService) WithWebhook(notifier *webhook.Notifier) *CustomerService {
+	s.webhook = notifier
 	return s
 }
 
@@ -235,13 +246,27 @@ func (s *CustomerService) UpdateStatus(ctx context.Context, id uuid.UUID, newSta
 	if err := s.repo.UpdateCustomer(ctx, customer); err != nil {
 		return err
 	}
+
+	changedBy, _ := ctx.Value("changed_by").(string)
+	if changedBy == "" {
+		changedBy = "system"
+	}
+
 	if s.audit != nil {
-		changedBy, _ := ctx.Value("changed_by").(string)
-		if changedBy == "" {
-			changedBy = "system"
-		}
 		s.audit.LogStatusChanged(ctx, customer.ID, oldStatus, newStatus, changedBy)
 	}
+
+	if s.webhook != nil {
+		// Detached from the request context: by the time this goroutine
+		// runs, the HTTP handler may have already returned and canceled
+		// ctx. The status transition already succeeded — a slow or
+		// unreachable webhook destination must not affect that outcome,
+		// so delivery gets its own background context instead of riding
+		// on (and being killed by) the request's lifecycle.
+		notifyCtx := context.WithoutCancel(ctx)
+		go s.webhook.NotifyStatusChanged(notifyCtx, customer.ID, oldStatus, newStatus, changedBy)
+	}
+
 	return nil
 }
 
@@ -268,14 +293,8 @@ func (s *CustomerService) ListCustomers(ctx context.Context, params domain.ListP
 	if params.Limit < 1 || params.Limit > 100 {
 		params.Limit = 20
 	}
-	if params.Status != "" {
-		validStatuses := map[string]bool{
-			"pending": true, "approved": true, "active": true,
-			"suspended": true, "blocked": true, "terminated": true,
-		}
-		if !validStatuses[params.Status] {
-			return nil, ErrInvalidStatus
-		}
+	if params.Status != "" && !domain.IsValidStatus(params.Status) {
+		return nil, ErrInvalidStatus
 	}
 	return s.repo.ListCustomers(ctx, params)
 }

@@ -46,6 +46,7 @@ internal/
   sanitize/                 ← free-text input sanitization (XSS defense-in-depth)
   service/                  ← business logic
   validation/               ← email and tax ID validators (CPF, CNPJ, SSN, EIN, NI, UTR)
+  webhook/                   ← status-change notifications (HMAC-signed, async, retried)
   acceptance/                ← end-to-end tests (httptest + testcontainers)
 
 db/migrations/              ← SQL migrations (golang-migrate)
@@ -151,6 +152,24 @@ Free-text fields (`firstName`, `lastName`, address fields) are sanitized in the 
 
 ### Audit Log
 Every customer creation, data update, and status change is recorded in `audit_logs` with the previous state (`old_value`), new state (`new_value`), timestamp, and the actor (`changed_by` from the JWT `sub` claim). Queryable via `GET /v1/customers/:id/audit`.
+
+### Webhook
+When `WEBHOOK_URL` is configured, every status transition (`PATCH /v1/customers/:id/status`) sends a `POST` notification to that URL with a `customer.<newStatus>` event (e.g. `customer.approved`, `customer.blocked`):
+
+```json
+{
+  "event": "customer.approved",
+  "customerId": "5f2c1e3a-...",
+  "oldStatus": "pending",
+  "newStatus": "approved",
+  "changedBy": "admin@fintech.com",
+  "occurredAt": "2026-06-19T22:14:03Z"
+}
+```
+
+If `WEBHOOK_SECRET` is also set, the request body is signed with HMAC-SHA256 in the `X-Webhook-Signature` header (hex-encoded) — the same pattern GitHub and Stripe use — so the receiver can verify the notification actually came from this API.
+
+Delivery is fire-and-forget and runs in a background goroutine, detached from the original request: up to 3 attempts with a short backoff, and a failing or unreachable destination is logged but never affects the outcome of the status-update request itself (the transition has already succeeded in the database by the time delivery is attempted). Leaving `WEBHOOK_URL` empty disables webhooks entirely — no notifier is constructed, no overhead is added.
 
 ### Tax ID Validation
 - **BR**: CPF (individuals) and CNPJ (companies) — full checksum validation
@@ -259,6 +278,8 @@ make run
 | `JWT_PRIVATE_KEY_PATH` | `keys/private.pem` | RSA private key path |
 | `JWT_PUBLIC_KEY_PATH` | `keys/public.pem` | RSA public key path |
 | `CORS_ORIGINS` | `*` | Allowed CORS origins |
+| `WEBHOOK_URL` | — | Destination URL for status-change notifications; empty disables webhooks |
+| `WEBHOOK_SECRET` | — | HMAC-SHA256 signing secret for `X-Webhook-Signature`; optional even when `WEBHOOK_URL` is set |
 
 ---
 
@@ -343,11 +364,13 @@ Keeping idempotency keys in the same database as customers ensures consistency w
 **Why does `docker-compose.yml` only include the API and PostgreSQL?**
 Redis and Kafka are listed under Next Steps but have no corresponding code yet — no cache reads/writes, no event publishing or consumption. Adding those containers to the compose file now would stand up infrastructure with nothing using it, which is misleading about the project's actual state. Each will be added to the compose file in the same change that introduces its first real usage in the code.
 
+**Why fire-and-forget HTTP for webhooks instead of a message queue?**
+A handful of retries over plain HTTP is appropriate for *notifying* a single external system about a status change — it's simple, requires no extra infrastructure, and the worst case (destination down, all retries exhausted) is an acceptable trade-off for a non-critical side effect. A message broker (Kafka, listed under Next Steps) would be the right tool if delivery needed to be guaranteed, replayed, or fanned out to multiple independent consumers — none of which is the case yet. Reaching for Kafka before a second consumer exists would be solving a problem the project doesn't have.
+
 ---
 
 ## Next Steps
 
-- [ ] Webhook — notify external systems on status changes
 - [ ] Deploy on AWS (ECS + RDS), with HTTPS/TLS terminated at the ALB (ACM certificate + HTTPS listener)
 - [ ] Redis — cache for frequent taxId/ID lookups
 - [ ] Prometheus metrics + Grafana dashboard
