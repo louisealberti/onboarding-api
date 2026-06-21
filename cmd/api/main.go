@@ -21,6 +21,7 @@ import (
 	"github.com/louisealberti/onboarding-api/internal/middleware"
 	"github.com/louisealberti/onboarding-api/internal/repository"
 	"github.com/louisealberti/onboarding-api/internal/service"
+	"github.com/louisealberti/onboarding-api/internal/webhook"
 	swaggerFiles "github.com/swaggo/files"
 	ginSwagger "github.com/swaggo/gin-swagger"
 )
@@ -67,6 +68,12 @@ func main() {
 	auditSvc := service.NewAuditService(auditRepo)
 	svc := service.NewCustomerService(repo).WithAudit(auditSvc)
 
+	if cfg.WebhookEnabled() {
+		notifier := webhook.NewNotifier(cfg.WebhookURL, cfg.WebhookSecret, logger)
+		svc = svc.WithWebhook(notifier)
+		logger.Info("webhook notifications enabled", slog.String("url", cfg.WebhookURL))
+	}
+
 	h := handler.NewCustomerHandler(svc)
 	ah := handler.NewAuditHandler(auditSvc)
 	hh := handler.NewHealthHandler(db, handler.BuildInfo{Version: version, BuildTime: buildTime})
@@ -83,19 +90,16 @@ func main() {
 	r.Use(middleware.RequestID())
 	r.Use(middleware.Logger(logger))
 
-	// Public routes — rate limited by IP (10 req/s, burst 20)
-	publicRL := middleware.RateLimitByIP(10, 20)
+	// Public routes
 	r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
-	r.GET("/health", publicRL, hh.Health)
-	r.POST("/auth/token", publicRL, authH.Token)
+	r.GET("/health", hh.Health)
+	r.POST("/auth/token", authH.Token)
 
-	// Protected routes — rate limited by JWT subject (20 req/s, burst 40)
+	// Protected routes
 	authMiddleware := middleware.Auth(publicKey)
-	protectedRL := middleware.RateLimitBySubject(20, 40)
 
 	v1 := r.Group("/v1")
 	v1.Use(authMiddleware)
-	v1.Use(protectedRL)
 	// When /v2 is introduced, uncomment to signal deprecation:
 	// v1.Use(middleware.Deprecated("2027-01-01", "https://api.example.com/v2"))
 
