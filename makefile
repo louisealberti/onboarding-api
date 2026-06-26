@@ -46,11 +46,11 @@ keys:
 		openssl rsa -in keys/private.pem -pubout -out keys/public.pem; \
 	fi
 
-## docker-up: generate keys (if needed) and start the full local stack (API + Postgres) in the background
+## docker-up: generate keys (if needed) and start the full local stack (API + Postgres + Prometheus + Grafana) in the background
 docker-up: keys
 	docker compose up --build -d
 
-## docker-down: stop the local stack and remove containers (keeps the Postgres volume)
+## docker-down: stop the local stack and remove containers (keeps the Postgres/Prometheus/Grafana volumes)
 docker-down:
 	docker compose down
 

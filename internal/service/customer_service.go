@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/louisealberti/onboarding-api/internal/domain"
+	"github.com/louisealberti/onboarding-api/internal/metrics"
 	"github.com/louisealberti/onboarding-api/internal/sanitize"
 	"github.com/louisealberti/onboarding-api/internal/validation/email"
 	"github.com/louisealberti/onboarding-api/internal/validation/taxid"
@@ -94,6 +95,9 @@ func (s *CustomerService) CreateCustomer(ctx context.Context, c *domain.Customer
 	if err := s.repo.CreateCustomer(ctx, c); err != nil {
 		return err
 	}
+
+	metrics.CustomersCreatedTotal.Inc()
+
 	if s.audit != nil {
 		changedBy, _ := ctx.Value("changed_by").(string)
 		if changedBy == "" {
@@ -247,6 +251,8 @@ func (s *CustomerService) UpdateStatus(ctx context.Context, id uuid.UUID, newSta
 		return err
 	}
 
+	metrics.CustomerStatusTransitionsTotal.WithLabelValues(oldStatus, newStatus).Inc()
+
 	changedBy, _ := ctx.Value("changed_by").(string)
 	if changedBy == "" {
 		changedBy = "system"
@@ -264,7 +270,14 @@ func (s *CustomerService) UpdateStatus(ctx context.Context, id uuid.UUID, newSta
 		// so delivery gets its own background context instead of riding
 		// on (and being killed by) the request's lifecycle.
 		notifyCtx := context.WithoutCancel(ctx)
-		go s.webhook.NotifyStatusChanged(notifyCtx, customer.ID, oldStatus, newStatus, changedBy)
+		go func() {
+			err := s.webhook.NotifyStatusChanged(notifyCtx, customer.ID, oldStatus, newStatus, changedBy)
+			outcome := "success"
+			if err != nil {
+				outcome = "failure"
+			}
+			metrics.WebhookDeliveriesTotal.WithLabelValues(outcome).Inc()
+		}()
 	}
 
 	return nil

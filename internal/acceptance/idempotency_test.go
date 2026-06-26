@@ -4,6 +4,8 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/louisealberti/onboarding-api/internal/metrics"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -33,6 +35,8 @@ func TestAcceptance_Idempotency(t *testing.T) {
 		require.Equal(t, http.StatusCreated, resp1.StatusCode)
 		id1 := body1["id"].(string)
 
+		before := testutil.ToFloat64(metrics.IdempotentReplaysTotal)
+
 		// Segunda request com mesma key — deve replay
 		resp2 := apiPostWithKey(t, srv, "/v1/customers", payload, key)
 		body2 := decodeBody(t, resp2)
@@ -40,6 +44,9 @@ func TestAcceptance_Idempotency(t *testing.T) {
 		assert.Equal(t, http.StatusCreated, resp2.StatusCode)
 		assert.Equal(t, id1, body2["id"], "id deve ser o mesmo da primeira request")
 		assert.Equal(t, "true", resp2.Header.Get("X-Idempotency-Replayed"))
+
+		after := testutil.ToFloat64(metrics.IdempotentReplaysTotal)
+		assert.Equal(t, before+1, after, "esperado IdempotentReplaysTotal incrementar em 1 no replay")
 	})
 
 	t.Run("keys diferentes criam customers diferentes", func(t *testing.T) {

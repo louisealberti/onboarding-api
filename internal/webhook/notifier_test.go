@@ -101,8 +101,11 @@ func TestNotifyStatusChanged_RetriesOnFailureThenSucceeds(t *testing.T) {
 	defer srv.Close()
 
 	n := NewNotifier(srv.URL, "", discardLogger()).WithBackoff(time.Millisecond)
-	n.NotifyStatusChanged(context.Background(), uuid.New(), "pending", "approved", "admin@fintech.com")
+	err := n.NotifyStatusChanged(context.Background(), uuid.New(), "pending", "approved", "admin@fintech.com")
 
+	if err != nil {
+		t.Errorf("expected nil error on eventual success, got %v", err)
+	}
 	if calls != 2 {
 		t.Fatalf("expected delivery to succeed on the 2nd attempt, got %d calls", calls)
 	}
@@ -118,10 +121,14 @@ func TestNotifyStatusChanged_GivesUpAfterMaxAttempts(t *testing.T) {
 	defer srv.Close()
 
 	n := NewNotifier(srv.URL, "", discardLogger()).WithBackoff(time.Millisecond)
-	// Must not panic, hang, or otherwise propagate an error: this is the
-	// fire-and-forget contract callers rely on.
-	n.NotifyStatusChanged(context.Background(), uuid.New(), "pending", "approved", "admin@fintech.com")
+	// Must not panic or hang. Unlike the in-process tests above, the
+	// returned error here IS asserted: this is the one path where a
+	// caller (e.g. for metrics) needs to observe final failure.
+	err := n.NotifyStatusChanged(context.Background(), uuid.New(), "pending", "approved", "admin@fintech.com")
 
+	if err == nil {
+		t.Error("expected a non-nil error after exhausting all retries")
+	}
 	if calls != maxAttempts {
 		t.Fatalf("expected exactly %d attempts, got %d", maxAttempts, calls)
 	}

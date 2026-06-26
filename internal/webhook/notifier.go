@@ -67,14 +67,17 @@ func (n *Notifier) WithBackoff(d time.Duration) *Notifier {
 // NotifyStatusChanged sends a "customer.<newStatus>" event to the configured
 // webhook URL.
 //
-// This method is fire-and-forget by contract: it is expected to be called
-// from a separate goroutine (see service.CustomerService.UpdateStatus), and
-// it deliberately swallows delivery failures after exhausting retries —
-// logging them — rather than returning an error to a caller who, by the
-// time delivery is attempted, has likely already responded to the original
-// HTTP request. A webhook destination being unreachable must never fail or
-// roll back the status transition that already succeeded in the database.
-func (n *Notifier) NotifyStatusChanged(ctx context.Context, customerID uuid.UUID, oldStatus, newStatus, changedBy string) {
+// This method is fire-and-forget by contract: it is meant to be called from
+// a separate goroutine (see service.CustomerService.UpdateStatus), and a
+// failing destination must never affect the status transition that already
+// succeeded in the database by the time delivery is attempted. The
+// returned error reflects only the final outcome after all retries —
+// callers may safely ignore it; it exists so a caller running in its own
+// goroutine can record an outcome metric (see metrics.WebhookDeliveriesTotal)
+// without needing its own copy of the retry logic. It is never propagated
+// to, or allowed to affect, the original HTTP request that triggered the
+// status change.
+func (n *Notifier) NotifyStatusChanged(ctx context.Context, customerID uuid.UUID, oldStatus, newStatus, changedBy string) error {
 	payload := StatusChangedPayload{
 		Event:      eventTypeForStatus(newStatus),
 		CustomerID: customerID,
@@ -89,7 +92,7 @@ func (n *Notifier) NotifyStatusChanged(ctx context.Context, customerID uuid.UUID
 		n.logger.Error("webhook: failed to marshal payload",
 			slog.String("customerId", customerID.String()),
 			slog.Any("error", err))
-		return
+		return err
 	}
 
 	var lastErr error
@@ -109,13 +112,14 @@ func (n *Notifier) NotifyStatusChanged(ctx context.Context, customerID uuid.UUID
 			}
 			continue
 		}
-		return
+		return nil
 	}
 
 	n.logger.Error("webhook: delivery failed after all retries, giving up",
 		slog.String("customerId", customerID.String()),
 		slog.Int("attempts", maxAttempts),
 		slog.Any("lastError", lastErr))
+	return lastErr
 }
 
 // deliver performs a single POST attempt and returns an error for any
