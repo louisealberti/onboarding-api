@@ -19,6 +19,7 @@ import (
 	"github.com/louisealberti/onboarding-api/internal/middleware"
 	"github.com/louisealberti/onboarding-api/internal/repository"
 	"github.com/louisealberti/onboarding-api/internal/service"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/modules/postgres"
@@ -100,9 +101,11 @@ func startServer(t *testing.T, db *sql.DB) *httptest.Server {
 
 	r := gin.New()
 	r.Use(middleware.RequestID())
+	r.Use(middleware.Metrics())
 	authMiddleware := middleware.Auth(&testRSAKey.PublicKey)
 
 	r.GET("/health", hh.Health)
+	r.GET("/metrics", gin.WrapH(promhttp.Handler()))
 	r.POST("/auth/token", handler.NewAuthHandler(testRSAKey).Token)
 
 	v1 := r.Group("/v1")
@@ -195,9 +198,11 @@ func startServerWithRateLimit(t *testing.T, db *sql.DB, r rate.Limit, b int) *ht
 
 	router := gin.New()
 	router.Use(middleware.RequestID())
+	router.Use(middleware.Metrics())
 	authMW := middleware.Auth(&testRSAKey.PublicKey)
 	router.POST("/auth/token", handler.NewAuthHandler(testRSAKey).Token)
 	router.GET("/health", hh.Health)
+	router.GET("/metrics", gin.WrapH(promhttp.Handler()))
 
 	v1 := router.Group("/v1")
 	v1.Use(authMW)

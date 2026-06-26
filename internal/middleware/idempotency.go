@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"github.com/louisealberti/onboarding-api/internal/metrics"
 	"github.com/louisealberti/onboarding-api/internal/repository"
 )
 
@@ -30,6 +31,7 @@ func Idempotency(repo *repository.IdempotencyRepository) gin.HandlerFunc {
 		record, err := repo.Get(c.Request.Context(), key)
 		if err == nil {
 			// Key exists and is not expired — replay the original response
+			metrics.IdempotentReplaysTotal.Inc()
 			c.Header(IdempotencyKeyHeader, key)
 			c.Header("X-Idempotency-Replayed", "true")
 			c.Data(record.StatusCode, "application/json", record.Response)

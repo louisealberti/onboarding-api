@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -18,10 +19,12 @@ import (
 	"github.com/louisealberti/onboarding-api/internal/config"
 	"github.com/louisealberti/onboarding-api/internal/database"
 	"github.com/louisealberti/onboarding-api/internal/handler"
+	"github.com/louisealberti/onboarding-api/internal/metrics"
 	"github.com/louisealberti/onboarding-api/internal/middleware"
 	"github.com/louisealberti/onboarding-api/internal/repository"
 	"github.com/louisealberti/onboarding-api/internal/service"
 	"github.com/louisealberti/onboarding-api/internal/webhook"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	swaggerFiles "github.com/swaggo/files"
 	ginSwagger "github.com/swaggo/gin-swagger"
 )
@@ -62,6 +65,10 @@ func main() {
 	}
 	defer db.Close()
 
+	appCtx, stopAppCtx := context.WithCancel(context.Background())
+	defer stopAppCtx()
+	go metrics.StartDBStatsCollector(appCtx, db)
+
 	repo := repository.NewCustomerRepository(db)
 	idempotencyRepo := repository.NewIdempotencyRepository(db)
 	auditRepo := repository.NewAuditRepository(db)
@@ -89,10 +96,12 @@ func main() {
 	r.Use(middleware.CORS([]string{corsOrigins}))
 	r.Use(middleware.RequestID())
 	r.Use(middleware.Logger(logger))
+	r.Use(middleware.Metrics())
 
 	// Public routes
 	r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
 	r.GET("/health", hh.Health)
+	r.GET("/metrics", gin.WrapH(promhttp.Handler()))
 	r.POST("/auth/token", authH.Token)
 
 	// Protected routes
@@ -147,8 +156,14 @@ func main() {
 	logger.Info("server shutdown completed")
 }
 
-func loadPrivateKey(path string) (*rsa.PrivateKey, error) {
-	data, err := os.ReadFile(path)
+// loadPrivateKey loads an RSA private key. If pathOrPEM looks like inline
+// PEM content (starts with "-----BEGIN"), it is parsed directly — this is
+// how the key arrives in ECS, injected from SSM Parameter Store as an
+// environment variable, since Fargate tasks have no persistent filesystem
+// to mount a keys/ directory into. Otherwise pathOrPEM is treated as a file
+// path, which is how local development and Docker Compose provide it.
+func loadPrivateKey(pathOrPEM string) (*rsa.PrivateKey, error) {
+	data, err := pemContentOrFile(pathOrPEM)
 	if err != nil {
 		return nil, err
 	}
@@ -159,8 +174,10 @@ func loadPrivateKey(path string) (*rsa.PrivateKey, error) {
 	return x509.ParsePKCS1PrivateKey(block.Bytes)
 }
 
-func loadPublicKey(path string) (*rsa.PublicKey, error) {
-	data, err := os.ReadFile(path)
+// loadPublicKey loads an RSA public key. See loadPrivateKey for the
+// inline-PEM-vs-file-path resolution rule.
+func loadPublicKey(pathOrPEM string) (*rsa.PublicKey, error) {
+	data, err := pemContentOrFile(pathOrPEM)
 	if err != nil {
 		return nil, err
 	}
@@ -177,4 +194,15 @@ func loadPublicKey(path string) (*rsa.PublicKey, error) {
 		return nil, errors.New("not an RSA public key")
 	}
 	return rsaPub, nil
+}
+
+// pemContentOrFile resolves a config value that is either raw PEM content
+// or a file path. ECS injects keys as env vars (their content, not a path);
+// local/Docker Compose pass a path on disk (keys/private.pem). Distinguish
+// by checking for the PEM header — a real file path never starts with it.
+func pemContentOrFile(value string) ([]byte, error) {
+	if strings.HasPrefix(strings.TrimSpace(value), "-----BEGIN") {
+		return []byte(value), nil
+	}
+	return os.ReadFile(value)
 }

@@ -9,7 +9,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/louisealberti/onboarding-api/internal/metrics"
 	"github.com/louisealberti/onboarding-api/internal/webhook"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 )
@@ -133,5 +135,53 @@ func TestUpdateStatus_Webhook(t *testing.T) {
 		mu.Unlock()
 
 		repo.AssertNotCalled(t, "UpdateCustomer")
+	})
+
+	t.Run("increments WebhookDeliveriesTotal with outcome=success on successful delivery", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		}))
+		defer srv.Close()
+
+		repo := new(MockCustomerRepository)
+		notifier := webhook.NewNotifier(srv.URL, "", nil)
+		svc := NewCustomerService(repo).WithWebhook(notifier)
+		existing := newExistingCustomer()
+
+		repo.On("GetByID", ctx, existing.ID).Return(existing, nil)
+		repo.On("UpdateCustomer", ctx, mock.AnythingOfType("*domain.Customer")).Return(nil)
+
+		before := testutil.ToFloat64(metrics.WebhookDeliveriesTotal.WithLabelValues("success"))
+
+		err := svc.UpdateStatus(ctx, existing.ID, "approved")
+		assert.NoError(t, err)
+
+		assert.Eventually(t, func() bool {
+			return testutil.ToFloat64(metrics.WebhookDeliveriesTotal.WithLabelValues("success")) == before+1
+		}, time.Second, 10*time.Millisecond, "expected WebhookDeliveriesTotal{outcome=success} to increment by 1")
+	})
+
+	t.Run("increments WebhookDeliveriesTotal with outcome=failure after exhausting retries", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusInternalServerError)
+		}))
+		defer srv.Close()
+
+		repo := new(MockCustomerRepository)
+		notifier := webhook.NewNotifier(srv.URL, "", nil).WithBackoff(time.Millisecond)
+		svc := NewCustomerService(repo).WithWebhook(notifier)
+		existing := newExistingCustomer()
+
+		repo.On("GetByID", ctx, existing.ID).Return(existing, nil)
+		repo.On("UpdateCustomer", ctx, mock.AnythingOfType("*domain.Customer")).Return(nil)
+
+		before := testutil.ToFloat64(metrics.WebhookDeliveriesTotal.WithLabelValues("failure"))
+
+		err := svc.UpdateStatus(ctx, existing.ID, "approved")
+		assert.NoError(t, err) // UpdateStatus itself must still succeed
+
+		assert.Eventually(t, func() bool {
+			return testutil.ToFloat64(metrics.WebhookDeliveriesTotal.WithLabelValues("failure")) == before+1
+		}, time.Second, 10*time.Millisecond, "expected WebhookDeliveriesTotal{outcome=failure} to increment by 1")
 	})
 }
